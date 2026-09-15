@@ -7,7 +7,7 @@
       "description": "Local single-user LeeClaw workspace",
       "members": [
         {
-          "profileId": "fd7049b6-3845-418f-84fa-20f9be3fe462",
+          "profileId": "gateway-owner",
           "role": "owner",
           "displayName": "Local Owner"
         }

@@ -22,6 +22,7 @@ else
     'go test ./... -count=1 -timeout=60s && go vet ./... && mkdir -p bin && go build -o bin/cobra-knowledge ./cmd/cobra && go build -o bin/cobra-context-mcp ./cmd/context-mcp && go build -o bin/cobra-graph-api ./cmd/graph-api'
 fi
 for f in integrations/openclaw/workspace-core/index.js integrations/openclaw/knowledge-plugin/index.js integrations/openclaw/knowledge-plugin/lib/*.js integrations/openclaw/openviking-plugin/index.js integrations/openclaw/openviking-plugin/lib/*.js integrations/openclaw/promotion-plugin/index.js integrations/openclaw/promotion-plugin/lib/*.js; do node --check "$f"; done
+node --check "$REPO/scripts/verify-knowledge-ui.mjs"
 node --test integrations/openclaw/workspace-core/test/*.test.js integrations/openclaw/knowledge-plugin/test/*.test.js integrations/openclaw/openviking-plugin/test/*.test.js
 
 echo "[account] OpenClaw Profile -> Workspace binding"
@@ -34,8 +35,9 @@ for (const ws of registry.workspaces) {
 }
 NODE
 grep -Fq 'authenticatedUserProfile?.profileId' integrations/openclaw/openviking-plugin/lib/principal.js
-grep -Fq 'X-Forwarded-User", sess.identity' cmd/auth-gateway/main.go
-! grep -Fq 'WeKnora login' cmd/auth-gateway/main.go
+grep -Fq 'config.gateway.auth = { mode: "password" }' "$REPO/scripts/start-openclaw.sh"
+grep -Fq 'profileId": "gateway-owner"' "$REPO/deploy/leeclaw/workspaces.json"
+! grep -Fq 'loginHTML' cmd/auth-gateway/main.go
 
 echo "[openviking] Workspace -> account mapping"
 node - "$REPO/deploy/leeclaw/workspaces.json" <<'NODE'
@@ -58,6 +60,16 @@ grep -Fq '"kind":"memory"' integrations/openclaw/openviking-plugin/openclaw.plug
 grep -Fq '"memory": "leeclaw-openviking"' configs/openclaw-v0.10.example.json
 for method in listMemories searchMemories getMemory createMemory updateMemory deleteMemory listSessions getSession searchArchive getMemorySource; do grep -Fq "$method" integrations/openclaw/openviking-plugin/lib/memory-service.js; done
 grep -Fq 'target_uri: "viking://~/memories"' integrations/openclaw/openviking-plugin/lib/client.js
+! grep -Fq 'registerNavigation({ id: "memory"' integrations/openclaw/openviking-plugin/browser/index.js
+! grep -Fq 'registerNavigation({ id: "skills"' integrations/openclaw/openviking-plugin/browser/index.js
+
+echo "[knowledge-ui] WeKnora native Knowledge UI through server-derived session"
+grep -Fq 'leeclaw.knowledge.webSession' integrations/openclaw/knowledge-plugin/index.js
+grep -Fq 'platform/knowledge-bases?leeclaw_embed=1' integrations/openclaw/knowledge-plugin/browser/index.js
+grep -Fq 'WEKNORA_API_KEY_LEECLAW' cmd/auth-gateway/main.go
+grep -Fq 'WEKNORA_BOOTSTRAP_PASSWORD' cmd/auth-gateway/main.go
+grep -Fq 'Authorization", "Bearer "+sess.weknoraToken' cmd/auth-gateway/main.go
+! grep -Fq 'id:"workspaces"' integrations/openclaw/knowledge-plugin/browser/index.js
 
 echo "[promotion] Experience -> Candidate -> Review -> Publish"
 grep -Fq 'type Candidate struct' internal/promotion/types.go
@@ -73,6 +85,7 @@ grep -Fq 'operator.admin' integrations/openclaw/promotion-plugin/index.js
 echo "[sandbox] persistent 18789 / 18790 exposure"
 grep -Fq 'OPENCLAW_SANDBOX_PORT:-18790' "$REPO/deploy/openclaw.override.yaml"
 grep -Fq 'LEECLAW_SANDBOX_UPSTREAM' "$REPO/deploy/openclaw.override.yaml"
+grep -Fq 'LEECLAW_KNOWLEDGE_PORT:-18791' "$REPO/deploy/openclaw.override.yaml"
 node -e 'const c=require(process.argv[1]); if(c.mcp?.apps?.enabled!==true || c.mcp.apps.sandboxPort!==18790) process.exit(1)' "$REPO/deploy/openclaw/state/openclaw.json"
 
 echo "[browser] image runtime, libraries and Chinese fonts"
@@ -90,6 +103,14 @@ if [ "$runtime" = 1 ]; then
     [ "$code" != 000 ] || { echo "FAIL [$layer:runtime] $url unreachable" >&2; exit 1; }
     echo "PASS [$layer:runtime] $url -> HTTP $code"
   done
+  if [ "${LEECLAW_UI_VERIFY:-}" = 1 ]; then
+    docker run --rm --network host --env-file "$REPO/deploy/.env" \
+      -e LEECLAW_UI_ARTIFACT_DIR=/artifacts \
+      -v "$REPO/scripts/verify-knowledge-ui.mjs:/verify-knowledge-ui.mjs:ro" \
+      -v /tmp:/artifacts openclaw:local node /verify-knowledge-ui.mjs
+  else
+    echo "SKIP [ui] set LEECLAW_UI_VERIFY=1 after approving this browser once in OpenClaw"
+  fi
 else
   echo "SKIP [runtime] containers are not running; set LEECLAW_RUNTIME_VERIFY=1 to require live checks"
 fi

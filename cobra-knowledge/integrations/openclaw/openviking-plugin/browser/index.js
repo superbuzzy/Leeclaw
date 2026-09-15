@@ -93,13 +93,5 @@ function skillMount(host) {
 
 export default defineControlUiPlugin({
   id: "leeclaw-openviking",
-  activate(host) {
-    const regs = [
-      host.ui.registerPage({ id: "memory", label: "Memory", mount: memoryMount(host) }),
-      host.ui.registerNavigation({ id: "memory", label: "Memory", page: { id: "memory" }, icon: "brain", order: 40 }),
-      host.ui.registerPage({ id: "skills", label: "Skills", mount: skillMount(host) }),
-      host.ui.registerNavigation({ id: "skills", label: "Skills", page: { id: "skills" }, icon: "puzzle", order: 50 }),
-    ];
-    return () => regs.toReversed().forEach((dispose) => dispose());
-  },
+  activate() { return () => {}; },
 });

@@ -1,6 +1,10 @@
 package main
 
 import (
+	"crypto/hmac"
+	"crypto/sha256"
+	"encoding/base64"
+	"encoding/json"
 	"io"
 	"net/http"
 	"net/http/httptest"
@@ -10,104 +14,160 @@ import (
 	"time"
 )
 
-func TestLoginAndProxyOpenClawProfileIdentity(t *testing.T) {
-	var received http.Header
-	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		received = r.Header.Clone()
-		_, _ = io.WriteString(w, "openclaw")
-	}))
+func TestOpenClawUsesNativeAuthenticationSurface(t *testing.T) {
+	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) { _, _ = io.WriteString(w, "native-openclaw") }))
 	defer upstream.Close()
-	gateway := newTestGateway(t, upstream.URL, upstream.URL)
-	form := url.Values{"password": {"test-password"}}
-	request := httptest.NewRequest(http.MethodPost, "/auth/login", strings.NewReader(form.Encode()))
-	request.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	gateway := newTestGateway(t, upstream.URL, upstream.URL, upstream.URL)
+	request := httptest.NewRequest(http.MethodGet, "/", nil)
 	response := httptest.NewRecorder()
 	gateway.routes().ServeHTTP(response, request)
-	if response.Code != http.StatusSeeOther {
-		t.Fatalf("login status=%d body=%s", response.Code, response.Body.String())
+	if response.Code != http.StatusOK || response.Body.String() != "native-openclaw" {
+		t.Fatalf("status=%d body=%q", response.Code, response.Body.String())
 	}
-	cookies := response.Result().Cookies()
-	if len(cookies) != 1 || cookies[0].Name != sessionCookie || !cookies[0].HttpOnly {
+}
+
+func TestKnowledgeTicketExchangeAndCredentialInjection(t *testing.T) {
+	var received http.Header
+	api := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		received = r.Header.Clone()
+		_, _ = io.WriteString(w, `{"success":true}`)
+	}))
+	defer api.Close()
+	ui := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "text/html")
+		_, _ = io.WriteString(w, "<html><head></head><body>WeKnora</body></html>")
+	}))
+	defer ui.Close()
+	gateway := newTestGateway(t, ui.URL, ui.URL, api.URL)
+	ticket := signTestTicket(t, "profile-owner", "leeclaw-local", "test-secret")
+	exchange := httptest.NewRequest(http.MethodGet, "/auth/session?ticket="+url.QueryEscape(ticket)+"&next="+url.QueryEscape("/platform/knowledge-bases?leeclaw_embed=1"), nil)
+	exchangeResponse := httptest.NewRecorder()
+	gateway.knowledgeRoutes().ServeHTTP(exchangeResponse, exchange)
+	if exchangeResponse.Code != http.StatusSeeOther {
+		t.Fatalf("exchange status=%d body=%s", exchangeResponse.Code, exchangeResponse.Body.String())
+	}
+	cookies := exchangeResponse.Result().Cookies()
+	if len(cookies) != 1 || cookies[0].Name != knowledgeCookie || !cookies[0].HttpOnly {
 		t.Fatalf("unexpected cookies: %#v", cookies)
 	}
-	request = httptest.NewRequest(http.MethodGet, "/", nil)
-	request.Host = "localhost:18789"
-	request.Header.Set("X-Forwarded-User", "attacker")
-	request.Header.Set("X-OpenClaw-Scopes", "operator.admin")
+	request := httptest.NewRequest(http.MethodGet, "/api/v1/knowledge-bases", nil)
+	request.Header.Set("Authorization", "Bearer attacker")
+	request.Header.Set("X-API-Key", "attacker")
 	request.AddCookie(cookies[0])
-	response = httptest.NewRecorder()
-	gateway.routes().ServeHTTP(response, request)
-	if response.Code != http.StatusOK || response.Body.String() != "openclaw" {
-		t.Fatalf("proxy status=%d body=%q", response.Code, response.Body.String())
+	response := httptest.NewRecorder()
+	gateway.knowledgeRoutes().ServeHTTP(response, request)
+	if response.Code != http.StatusOK {
+		t.Fatalf("api status=%d body=%s", response.Code, response.Body.String())
 	}
-	if got := received.Get("X-Forwarded-User"); got != "profile-owner" {
-		t.Fatalf("identity=%q", got)
-	}
-	if got := received.Get("X-OpenClaw-Scopes"); !strings.Contains(got, "operator.admin") {
-		t.Fatalf("scopes=%q", got)
+	if received.Get("X-API-Key") != "wk-secret" || received.Get("X-Tenant-ID") != "10000" || received.Get("X-External-User-ID") != "profile-owner" {
+		t.Fatalf("headers=%v", received)
 	}
 }
 
-func TestInvalidOpenClawPasswordDoesNotCreateSession(t *testing.T) {
+func TestKnowledgeTicketCreatesServerSideWeKnoraUserSession(t *testing.T) {
+	var received http.Header
+	weknora := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path == "/api/v1/auth/login" {
+			w.Header().Set("Content-Type", "application/json")
+			_, _ = io.WriteString(w, `{"token":"user-session-token","active_tenant":{"id":10000}}`)
+			return
+		}
+		received = r.Header.Clone()
+		_, _ = io.WriteString(w, `{"success":true}`)
+	}))
+	defer weknora.Close()
+	gateway := newTestGateway(t, weknora.URL, weknora.URL, weknora.URL)
+	gateway.cfg.weknoraEmail = "mapped@local.invalid"
+	gateway.cfg.weknoraPassword = "server-only"
+	cookie := establishTestSession(t, gateway)
+	request := httptest.NewRequest(http.MethodGet, "/api/v1/user/favorites", nil)
+	request.Header.Set("Authorization", "Bearer browser-value")
+	request.AddCookie(cookie)
+	response := httptest.NewRecorder()
+	gateway.knowledgeRoutes().ServeHTTP(response, request)
+	if response.Code != http.StatusOK {
+		t.Fatalf("status=%d body=%s", response.Code, response.Body.String())
+	}
+	if received.Get("Authorization") != "Bearer user-session-token" || received.Get("X-API-Key") != "" {
+		t.Fatalf("headers=%v", received)
+	}
+}
+
+func TestKnowledgeUIEmbedInjection(t *testing.T) {
+	ui := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "text/html; charset=utf-8")
+		_, _ = io.WriteString(w, "<html><head></head><body>WeKnora</body></html>")
+	}))
+	defer ui.Close()
+	gateway := newTestGateway(t, ui.URL, ui.URL, ui.URL)
+	cookie := establishTestSession(t, gateway)
+	request := httptest.NewRequest(http.MethodGet, "/platform/knowledge-bases?leeclaw_embed=1", nil)
+	request.AddCookie(cookie)
+	response := httptest.NewRecorder()
+	gateway.knowledgeRoutes().ServeHTTP(response, request)
+	if response.Code != http.StatusOK || !strings.Contains(response.Body.String(), "aside_box") || !strings.Contains(response.Body.String(), "WeKnora") {
+		t.Fatalf("status=%d body=%s", response.Code, response.Body.String())
+	}
+}
+
+func TestInvalidKnowledgeTicketIsRejected(t *testing.T) {
 	upstream := httptest.NewServer(http.NotFoundHandler())
 	defer upstream.Close()
-	gateway := newTestGateway(t, upstream.URL, upstream.URL)
-	form := url.Values{"password": {"wrong"}}
-	request := httptest.NewRequest(http.MethodPost, "/auth/login", strings.NewReader(form.Encode()))
-	request.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	gateway := newTestGateway(t, upstream.URL, upstream.URL, upstream.URL)
 	response := httptest.NewRecorder()
-	gateway.routes().ServeHTTP(response, request)
-	if response.Code != http.StatusOK || len(response.Result().Cookies()) != 0 {
-		t.Fatalf("status=%d cookies=%#v", response.Code, response.Result().Cookies())
+	gateway.knowledgeRoutes().ServeHTTP(response, httptest.NewRequest(http.MethodGet, "/auth/session?ticket=invalid", nil))
+	if response.Code != http.StatusUnauthorized || len(response.Result().Cookies()) != 0 {
+		t.Fatalf("status=%d cookies=%v", response.Code, response.Result().Cookies())
 	}
 }
 
-func TestSandboxProxyIsPublicAndStripsIdentity(t *testing.T) {
+func TestSandboxProxyStripsIdentity(t *testing.T) {
 	var received http.Header
 	sandbox := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		received = r.Header.Clone()
 		w.WriteHeader(http.StatusNoContent)
 	}))
 	defer sandbox.Close()
-	upstream := httptest.NewServer(http.NotFoundHandler())
-	defer upstream.Close()
-	gateway := newTestGateway(t, upstream.URL, sandbox.URL)
+	gateway := newTestGateway(t, sandbox.URL, sandbox.URL, sandbox.URL)
 	request := httptest.NewRequest(http.MethodGet, "/app/ticket", nil)
 	request.Header.Set("X-Forwarded-User", "attacker")
 	response := httptest.NewRecorder()
 	gateway.sandboxRoutes().ServeHTTP(response, request)
-	if response.Code != http.StatusNoContent {
-		t.Fatalf("sandbox status=%d", response.Code)
-	}
-	if received.Get("X-Forwarded-User") != "" {
-		t.Fatalf("identity leaked to sandbox: %q", received.Get("X-Forwarded-User"))
+	if response.Code != http.StatusNoContent || received.Get("X-Forwarded-User") != "" {
+		t.Fatalf("status=%d headers=%v", response.Code, received)
 	}
 }
 
-func TestUnauthenticatedHTMLRedirectsToLogin(t *testing.T) {
-	upstream := httptest.NewServer(http.NotFoundHandler())
-	defer upstream.Close()
-	gateway := newTestGateway(t, upstream.URL, upstream.URL)
-	request := httptest.NewRequest(http.MethodGet, "/knowledge?tab=all", nil)
-	request.Header.Set("Accept", "text/html")
-	response := httptest.NewRecorder()
-	gateway.routes().ServeHTTP(response, request)
-	if response.Code != http.StatusSeeOther || !strings.HasPrefix(response.Header().Get("Location"), "/login?next=") {
-		t.Fatalf("status=%d location=%q", response.Code, response.Header().Get("Location"))
-	}
-}
-
-func newTestGateway(t *testing.T, upstream, sandbox string) *server {
+func signTestTicket(t *testing.T, profileID, workspaceID, secret string) string {
 	t.Helper()
-	upstreamURL, err := url.Parse(upstream)
+	raw, err := json.Marshal(ticketClaims{ProfileID: profileID, WorkspaceID: workspaceID, Exp: time.Now().Add(time.Minute).Unix(), Nonce: "nonce"})
 	if err != nil {
 		t.Fatal(err)
 	}
-	sandboxURL, err := url.Parse(sandbox)
-	if err != nil {
-		t.Fatal(err)
+	payload := base64.RawURLEncoding.EncodeToString(raw)
+	mac := hmac.New(sha256.New, []byte(secret))
+	_, _ = mac.Write([]byte(payload))
+	return payload + "." + base64.RawURLEncoding.EncodeToString(mac.Sum(nil))
+}
+
+func establishTestSession(t *testing.T, gateway *server) *http.Cookie {
+	t.Helper()
+	ticket := signTestTicket(t, "profile-owner", "leeclaw-local", "test-secret")
+	response := httptest.NewRecorder()
+	gateway.knowledgeRoutes().ServeHTTP(response, httptest.NewRequest(http.MethodGet, "/auth/session?ticket="+url.QueryEscape(ticket), nil))
+	return response.Result().Cookies()[0]
+}
+
+func newTestGateway(t *testing.T, openclaw, ui, api string) *server {
+	t.Helper()
+	parse := func(raw string) *url.URL {
+		value, err := url.Parse(raw)
+		if err != nil {
+			t.Fatal(err)
+		}
+		return value
 	}
-	s, err := newServer(config{listenAddr: ":0", sandboxListenAddr: ":0", upstreamURL: upstreamURL, sandboxUpstreamURL: sandboxURL, identity: "profile-owner", password: "test-password", role: "owner", sessionTTL: time.Hour})
+	s, err := newServer(config{listenAddr: ":0", sandboxListenAddr: ":0", knowledgeListenAddr: ":0", upstreamURL: parse(openclaw), sandboxUpstreamURL: parse(openclaw), knowledgeUIURL: parse(ui), knowledgeAPIURL: parse(api), knowledgeSecret: "test-secret", weknoraAPIKey: "wk-secret", weknoraTenantID: "10000", sessionTTL: time.Hour})
 	if err != nil {
 		t.Fatal(err)
 	}

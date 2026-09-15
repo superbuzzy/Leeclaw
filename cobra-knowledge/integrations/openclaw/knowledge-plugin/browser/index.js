@@ -1,105 +1,55 @@
 import { defineControlUiPlugin } from "openclaw/plugin-sdk/control-ui";
 import "./knowledge.css";
 
-function el(tag, cls, text) { const n = document.createElement(tag); if (cls) n.className = cls; if (text !== undefined) n.textContent = text; return n; }
-function text(value, fallback = "—") { return value === undefined || value === null || value === "" ? fallback : String(value); }
-function nameOf(item) { return text(item?.name ?? item?.title ?? item?.filename ?? item?.file_name ?? item?.standard_question ?? item?.action ?? item?.id, "未命名"); }
-function statusOf(item) { return text(item?.parse_status ?? item?.status ?? item?.state ?? item?.role ?? item?.outcome, ""); }
-function itemId(item) { return item?.id ?? item?.knowledge_id ?? item?.seq_id; }
-function canEdit(role) { return ["editor", "admin", "owner"].includes(role); }
-function canAdmin(role) { return ["admin", "owner"].includes(role); }
-function canOwn(role) { return role === "owner"; }
-
-function button(label, cls = "lk-button") { return el("button", cls, label); }
-function field(label, input) { const wrap = el("label", "lk-field"); wrap.append(el("span", "lk-field-label", label), input); return wrap; }
-function input(value = "", placeholder = "") { const n = el("input", "lk-input"); n.value = value; n.placeholder = placeholder; return n; }
-function select(options, selected) { const n = el("select", "lk-input"); for (const [value,label] of options) { const o=el("option", "", label); o.value=value; o.selected=value===selected; n.append(o); } return n; }
-function textarea(value = "", placeholder = "") { const n = el("textarea", "lk-textarea"); n.value=value; n.placeholder=placeholder; return n; }
-function notify(message) { window.alert(message); }
-function confirmAction(message) { return window.confirm(message); }
-
-function unwrapRows(value, keys = []) {
-  if (Array.isArray(value)) return value;
-  if (!value || typeof value !== "object") return [];
-  for (const key of keys) if (Array.isArray(value[key])) return value[key];
-  return [];
-}
-
-function renderGraph(container, graph) {
-  container.replaceChildren();
-  const nodes = Array.isArray(graph?.nodes) ? graph.nodes : [];
-  const edges = Array.isArray(graph?.edges) ? graph.edges : [];
-  if (!nodes.length) { container.append(el("div", "lk-empty", "暂无图谱节点")); return; }
-  const width = Math.max(820, container.clientWidth || 820); const height = 520;
-  const svg = document.createElementNS("http://www.w3.org/2000/svg", "svg"); svg.setAttribute("viewBox", `0 0 ${width} ${height}`); svg.classList.add("lk-graph-svg");
-  const radius = Math.min(width, height) * 0.36; const cx=width/2; const cy=height/2; const pos=new Map();
-  nodes.forEach((node,index)=>{ const angle=Math.PI*2*index/nodes.length-Math.PI/2; const ring=nodes.length<=3?radius*0.55:radius; pos.set(node.id,{x:cx+Math.cos(angle)*ring,y:cy+Math.sin(angle)*ring}); });
-  for (const edge of edges) { const a=pos.get(edge.source), b=pos.get(edge.target); if(!a||!b) continue; const line=document.createElementNS(svg.namespaceURI,"line"); line.setAttribute("x1",a.x); line.setAttribute("y1",a.y); line.setAttribute("x2",b.x); line.setAttribute("y2",b.y); line.setAttribute("class","lk-edge"); svg.append(line); }
-  for (const node of nodes) { const p=pos.get(node.id); const g=document.createElementNS(svg.namespaceURI,"g"); g.setAttribute("transform",`translate(${p.x} ${p.y})`); const c=document.createElementNS(svg.namespaceURI,"circle"); c.setAttribute("r",node.kind==="property"?"18":"24"); c.setAttribute("class",`lk-node lk-node-${node.kind||"entity"}`); const l=document.createElementNS(svg.namespaceURI,"text"); l.setAttribute("y",node.kind==="property"?"34":"41"); l.setAttribute("class","lk-node-label"); l.textContent=text(node.label??node.id); g.append(c,l); svg.append(g); }
-  container.append(svg); const meta=graph?.meta; if(meta) container.append(el("div","lk-graph-meta",`${text(meta.view,"graph")} · ${text(meta.returned_nodes??nodes.length)} 节点 · ${text(meta.returned_edges??edges.length)} 边${meta.ontology_version?` · ontology ${meta.ontology_version}`:""}`));
-}
-
-function workspaceToolbar(host, rootState, onChanged) {
-  const wrap=el("div","lk-workspace-toolbar"); const label=el("span","lk-workspace-label","工作空间"); const chooser=select([],""); const role=el("span","lk-role-badge",""); const refresh=async()=>{
-    const result=await host.request("leeclaw.workspaces.list",{}); const items=result?.items??[]; const current=await host.request("leeclaw.workspaces.current",{}); rootState.workspace=current; chooser.replaceChildren();
-    for(const item of items){ const o=el("option","",`${item.name} · ${item.role}`); o.value=item.id; o.selected=item.id===current.id; chooser.append(o); } role.textContent=current.role??"";
-  };
-  chooser.onchange=async()=>{ const next=await host.request("leeclaw.workspaces.switch",{workspaceId:chooser.value}); rootState.workspace=next; role.textContent=next.role; await onChanged?.(next); };
-  wrap.append(label,chooser,role); refresh().catch(e=>{ wrap.append(el("span","lk-error",String(e))); }); return { element:wrap, refresh };
-}
-
-function renderRows(container, rows, actions = []) {
-  container.replaceChildren(); if(!rows?.length){container.append(el("div","lk-empty","暂无数据")); return;}
-  for(const item of rows){ const row=el("div","lk-row"); const main=el("div","lk-row-main"); main.append(el("div","lk-row-title",nameOf(item))); const sub=item?.at ? `${item.at} · ${item.actorProfileId ?? "unknown"}${item.resourceType ? ` · ${item.resourceType}` : ""}${item.resourceId ? `:${item.resourceId}` : ""}` : item?.description??item?.summary??item?.email??item?.uri??item?.source??item?.id; if(sub) main.append(el("div","lk-row-sub",String(sub).slice(0,320))); row.append(main); const s=statusOf(item); if(s) row.append(el("span","lk-badge",s)); if(actions.length){ const box=el("div","lk-row-actions"); for(const action of actions){ if(action.when && !action.when(item)) continue; const b=button(action.label,"lk-mini-button"); b.onclick=()=>action.run(item); box.append(b);} row.append(box);} container.append(row); }
+function knowledgeOrigin() {
+  const protocol = window.location.protocol;
+  const host = window.location.hostname;
+  const configured = Number(window.__LEECLAW_KNOWLEDGE_PORT__ ?? 18791);
+  return `${protocol}//${host}:${configured}`;
 }
 
 function createKnowledgePage(host) {
   return (container) => {
-    const state={workspace:null, selectedKb:null, activeTab:"documents", disposed:false};
-    const root=el("section","lk-page"); const header=el("header","lk-header"); const titleBox=el("div"); titleBox.append(el("h1","lk-title","Knowledge"),el("p","lk-subtitle","WeKnora 的知识管理能力，以 OpenClaw 原生体验统一使用。")); const actions=el("div","lk-actions"); const refreshBtn=button("刷新","lk-button lk-button-secondary"); const createBtn=button("新建知识库"); actions.append(refreshBtn,createBtn); header.append(titleBox,actions);
-    const ws=workspaceToolbar(host,state,async()=>{state.selectedKb=null; detail.hidden=true; empty.hidden=false; await loadKbList();}); root.append(header,ws.element);
-    const layout=el("div","lk-layout"); const sidebar=el("aside","lk-sidebar"); sidebar.append(el("div","lk-side-head","知识库")); const list=el("div","lk-kb-list"); sidebar.append(list); const main=el("main","lk-main"); const empty=el("div","lk-empty-panel","选择一个知识库开始管理文档、Wiki、FAQ、图谱、共享和设置。 "); const detail=el("div","lk-detail"); detail.hidden=true; const detailHead=el("div","lk-detail-head"); const detailTitle=el("h2","lk-detail-title"); const detailDesc=el("p","lk-detail-desc"); detailHead.append(detailTitle,detailDesc); const tabs=el("div","lk-tabs"); const content=el("div","lk-content"); detail.append(detailHead,tabs,content); main.append(empty,detail); layout.append(sidebar,main); root.append(layout); container.append(root);
-    const call=(method,params={})=>host.request(method,params);
+    const root = document.createElement("section");
+    root.className = "leeclaw-knowledge-native";
+    const status = document.createElement("div");
+    status.className = "leeclaw-knowledge-loading";
+    status.textContent = "正在连接 Knowledge…";
+    root.append(status);
+    container.append(root);
+    let disposed = false;
 
-    async function loadKbList(){ try{ const items=await call("leeclaw.knowledge.list",{creator:"all"}); list.replaceChildren(); for(const kb of (items??[])){ const b=button("","lk-kb"); if(state.selectedKb?.id===kb.id)b.classList.add("is-active"); b.append(el("strong","lk-kb-name",nameOf(kb))); const meta=[kb.type,kb.knowledge_count??kb.total].filter(v=>v!==undefined&&v!==null).join(" · "); if(meta)b.append(el("span","lk-kb-meta",meta)); b.onclick=()=>selectKb(kb); list.append(b);} if(!items?.length)list.append(el("div","lk-empty","暂无知识库")); }catch(e){ list.replaceChildren(el("div","lk-error",String(e))); } }
-    async function selectKb(kb){ state.selectedKb=kb; empty.hidden=true; detail.hidden=false; detailTitle.textContent=nameOf(kb); detailDesc.textContent=text(kb.description,`ID: ${kb.id}`); drawTabs(); await loadActiveTab(); await loadKbList(); }
-    function drawTabs(){ const defs=[["documents","文档"],["wiki","Wiki"],["faq","FAQ"],["tags","标签"],["search","检索测试"],["entity","实体图"],["ontology","本体图"],["access","共享"],["activity","审计"],["settings","设置"]]; tabs.replaceChildren(); for(const [id,label] of defs){ const b=button(label,`lk-tab${state.activeTab===id?" is-active":""}`); b.onclick=()=>{state.activeTab=id; drawTabs(); loadActiveTab();}; tabs.append(b);} }
+    (async () => {
+      try {
+        const session = await host.request("leeclaw.knowledge.webSession", {});
+        if (disposed) return;
+        // Non-secret sentinel: the 18791 gateway removes it and injects the
+        // server-side credential derived from the authenticated workspace.
+        localStorage.setItem("weknora_token", "leeclaw-workspace-session");
+        localStorage.setItem("weknora_lite_mode", "false");
+        const frame = document.createElement("iframe");
+        frame.className = "leeclaw-knowledge-frame";
+        frame.title = "Knowledge";
+        frame.allow = "clipboard-read; clipboard-write";
+        const next = "/platform/knowledge-bases?leeclaw_embed=1";
+        frame.src = `${knowledgeOrigin()}/auth/session?ticket=${encodeURIComponent(session.ticket)}&next=${encodeURIComponent(next)}`;
+        frame.addEventListener("load", () => status.remove(), { once: true });
+        root.append(frame);
+      } catch (error) {
+        status.className = "leeclaw-knowledge-error";
+        status.textContent = `Knowledge 连接失败：${error instanceof Error ? error.message : String(error)}`;
+      }
+    })();
 
-    async function documentTab(){ const result=await call("leeclaw.knowledge.documents",{kbId:state.selectedKb.id,page:1,page_size:100}); const box=el("div"); const toolbar=el("div","lk-section-actions");
-      if(canEdit(state.workspace?.role)){ const file=document.createElement("input"); file.type="file"; file.className="lk-file"; const upload=button("上传文件"); upload.onclick=()=>file.click(); file.onchange=async()=>{ const f=file.files?.[0]; if(!f)return; const base64=await new Promise((resolve,reject)=>{const r=new FileReader(); r.onload=()=>resolve(String(r.result).split(",")[1]??""); r.onerror=reject; r.readAsDataURL(f);}); await call("leeclaw.knowledge.document.upload",{kbId:state.selectedKb.id,filename:f.name,contentType:f.type||"application/octet-stream",base64}); await documentTab(); }; const url=button("添加 URL","lk-button lk-button-secondary"); url.onclick=async()=>{const u=window.prompt("URL"); if(!u)return; await call("leeclaw.knowledge.document.url",{kbId:state.selectedKb.id,url:u}); await documentTab();}; const manual=button("手工知识","lk-button lk-button-secondary"); manual.onclick=async()=>{const t=window.prompt("标题"); if(!t)return; const c=window.prompt("Markdown 内容"); if(c===null)return; await call("leeclaw.knowledge.document.manual",{kbId:state.selectedKb.id,title:t,content:c,status:"published"}); await documentTab();}; toolbar.append(upload,url,manual,file); }
-      const rows=el("div"); box.append(toolbar,rows); content.replaceChildren(box); renderRows(rows,result?.items??[],canEdit(state.workspace?.role)?[{label:"重解析",run:async i=>{await call("leeclaw.knowledge.document.reparse",{kbId:state.selectedKb.id,documentId:itemId(i)}); await documentTab();}},{label:"删除",run:async i=>{if(confirmAction(`删除 ${nameOf(i)}？`)){await call("leeclaw.knowledge.document.delete",{kbId:state.selectedKb.id,documentId:itemId(i)}); await documentTab();}}}]:[]); }
-
-    async function wikiTab(){ const result=await call("leeclaw.knowledge.wiki",{kbId:state.selectedKb.id,page:1,page_size:100}); const box=el("div"); const toolbar=el("div","lk-section-actions"); if(canEdit(state.workspace?.role)){ const add=button("新建 Wiki 页"); add.onclick=async()=>{const title=window.prompt("标题"); if(!title)return; const slug=window.prompt("Slug",title.toLowerCase().replace(/\s+/g,"-")); if(!slug)return; const body=window.prompt("Markdown 内容")??""; await call("leeclaw.knowledge.wiki.create",{kbId:state.selectedKb.id,page:{title,slug,content:body,status:"published",page_type:"concept"}}); await wikiTab();}; toolbar.append(add);} const rows=el("div"); box.append(toolbar,rows); content.replaceChildren(box); renderRows(rows,result?.items??[],canEdit(state.workspace?.role)?[{label:"改标题",run:async i=>{const slug=i.slug; if(!slug)return; const title=window.prompt("Wiki 标题",i.title??nameOf(i)); if(!title)return; await call("leeclaw.knowledge.wiki.update",{kbId:state.selectedKb.id,slug,page:{title,version:i.version}}); await wikiTab();}},{label:"删除",run:async i=>{const slug=i.slug; if(slug&&confirmAction(`删除 Wiki：${nameOf(i)}？`)){await call("leeclaw.knowledge.wiki.delete",{kbId:state.selectedKb.id,slug}); await wikiTab();}}}]:[]); }
-
-    async function faqTab(){ const result=await call("leeclaw.knowledge.faq",{kbId:state.selectedKb.id,page:1,page_size:100}); const box=el("div"); const toolbar=el("div","lk-section-actions"); if(canEdit(state.workspace?.role)){ const add=button("新增 FAQ"); add.onclick=async()=>{const q=window.prompt("标准问题"); if(!q)return; const a=window.prompt("答案")??""; await call("leeclaw.knowledge.faq.create",{kbId:state.selectedKb.id,entry:{standard_question:q,similar_questions:[],negative_questions:[],answers:[a],tag_id:0,tag_name:""}}); await faqTab();}; toolbar.append(add);} const rows=el("div"); box.append(toolbar,rows); content.replaceChildren(box); renderRows(rows,result?.items??[],canEdit(state.workspace?.role)?[{label:"编辑",run:async i=>{const id=i.seq_id??i.id; if(!id)return; const q=window.prompt("标准问题",i.standard_question??""); if(!q)return; const currentAnswer=Array.isArray(i.answers)?i.answers[0]??"":""; const a=window.prompt("答案",currentAnswer); if(a===null)return; await call("leeclaw.knowledge.faq.update",{kbId:state.selectedKb.id,entryId:id,entry:{standard_question:q,similar_questions:i.similar_questions??[],negative_questions:i.negative_questions??[],answers:[a],tag_id:Number(i.tag_id??0),tag_name:i.tag_name??"",is_enabled:i.is_enabled,is_recommended:i.is_recommended}}); await faqTab();}},{label:"删除",run:async i=>{const id=i.seq_id??i.id; if(id&&confirmAction(`删除 FAQ：${nameOf(i)}？`)){await call("leeclaw.knowledge.faq.delete",{kbId:state.selectedKb.id,ids:[id]}); await faqTab();}}}]:[]); }
-
-    async function tagsTab(){ const result=await call("leeclaw.knowledge.tags",{kbId:state.selectedKb.id,page:1,page_size:100}); const box=el("div"); const toolbar=el("div","lk-section-actions"); if(canEdit(state.workspace?.role)){ const add=button("新建标签"); add.onclick=async()=>{const n=window.prompt("标签名称"); if(!n)return; await call("leeclaw.knowledge.tag.create",{kbId:state.selectedKb.id,name:n}); await tagsTab();}; toolbar.append(add);} const rows=el("div"); box.append(toolbar,rows); content.replaceChildren(box); renderRows(rows,result?.items??[],canEdit(state.workspace?.role)?[{label:"重命名",run:async i=>{const id=i.id??i.seq_id; if(!id)return; const name=window.prompt("标签名称",i.name??""); if(!name)return; await call("leeclaw.knowledge.tag.update",{kbId:state.selectedKb.id,tagId:id,patch:{name,color:i.color??"",sort_order:Number(i.sort_order??0)}}); await tagsTab();}},{label:"删除",run:async i=>{const id=i.id??i.seq_id; if(id&&confirmAction(`删除标签 ${nameOf(i)}？`)){await call("leeclaw.knowledge.tag.delete",{kbId:state.selectedKb.id,tagId:id,force:true}); await tagsTab();}}}]:[]); }
-
-    function searchTab(){ const wrap=el("div","lk-search-panel"); const q=input("","输入检索问题"); const run=button("检索"); const out=el("pre","lk-json"); run.onclick=async()=>{out.textContent="检索中…"; try{out.textContent=JSON.stringify(await call("leeclaw.knowledge.search",{kbId:state.selectedKb.id,query:{query:q.value}}),null,2);}catch(e){out.textContent=String(e);}}; wrap.append(field("查询",q),run,out); content.replaceChildren(wrap); }
-
-    async function accessTab(){ const [shares,orgs]=await Promise.all([call("leeclaw.knowledge.shares",{kbId:state.selectedKb.id}),call("leeclaw.knowledge.organizations",{})]); const box=el("div"); const toolbar=el("div","lk-section-actions"); if(canAdmin(state.workspace?.role)){ const add=button("新增共享"); add.onclick=async()=>{const items=orgs?.items??[]; const hint=items.map(o=>`${o.id}: ${nameOf(o)}`).join("\n"); const org=window.prompt(`组织 ID：\n${hint}`); if(!org)return; const permission=window.prompt("权限：admin/editor/viewer","viewer")||"viewer"; await call("leeclaw.knowledge.share.create",{kbId:state.selectedKb.id,organizationId:org,permission}); await accessTab();}; toolbar.append(add);} const rows=el("div"); box.append(toolbar,rows); content.replaceChildren(box); renderRows(rows,shares?.items??[],canAdmin(state.workspace?.role)?[{label:"改权限",run:async i=>{const p=window.prompt("权限：admin/editor/viewer",i.permission||"viewer"); if(!p)return; await call("leeclaw.knowledge.share.update",{kbId:state.selectedKb.id,shareId:i.id,permission:p}); await accessTab();}},{label:"取消共享",run:async i=>{if(confirmAction("取消该共享？")){await call("leeclaw.knowledge.share.delete",{kbId:state.selectedKb.id,shareId:i.id}); await accessTab();}}}]:[]); }
-
-    function settingsTab(){ const form=el("div","lk-form-card"); const n=input(nameOf(state.selectedKb)); const d=textarea(state.selectedKb.description??""); const save=button("保存修改"); save.disabled=!canEdit(state.workspace?.role); save.onclick=async()=>{const kb=await call("leeclaw.knowledge.update",{id:state.selectedKb.id,name:n.value,description:d.value}); state.selectedKb=kb; await selectKb(kb);}; form.append(field("名称",n),field("描述",d),save); if(canAdmin(state.workspace?.role)){const del=button("删除知识库","lk-button lk-danger"); del.onclick=async()=>{if(confirmAction(`确认永久删除 ${nameOf(state.selectedKb)}？`)){await call("leeclaw.knowledge.delete",{id:state.selectedKb.id}); state.selectedKb=null; detail.hidden=true; empty.hidden=false; await loadKbList();}}; form.append(del);} content.replaceChildren(form); }
-
-    async function loadActiveTab(){ if(!state.selectedKb)return; content.replaceChildren(el("div","lk-loading","加载中…")); try{
-      if(state.activeTab==="documents") await documentTab(); else if(state.activeTab==="wiki") await wikiTab(); else if(state.activeTab==="faq") await faqTab(); else if(state.activeTab==="tags") await tagsTab(); else if(state.activeTab==="search") searchTab(); else if(state.activeTab==="entity"||state.activeTab==="ontology") renderGraph(content,await call("leeclaw.knowledge.graph",{kbId:state.selectedKb.id,view:state.activeTab})); else if(state.activeTab==="access") await accessTab(); else if(state.activeTab==="activity"){const r=await call("leeclaw.audit.list",{resourceId:state.selectedKb.id,limit:100}); renderRows(content,r?.items??[]);} else if(state.activeTab==="settings") settingsTab();
-    }catch(e){content.replaceChildren(el("div","lk-error",String(e)));} }
-
-    refreshBtn.onclick=()=>state.selectedKb?loadActiveTab():loadKbList(); createBtn.onclick=async()=>{ if(!canEdit(state.workspace?.role)){notify("当前工作空间角色没有新建权限");return;} const n=window.prompt("知识库名称"); if(!n)return; const d=window.prompt("描述（可选）")??""; const t=window.prompt("类型：document / faq","document")||"document"; try{const kb=await call("leeclaw.knowledge.create",{name:n,description:d,type:t}); await loadKbList(); if(kb?.id)await selectKb(kb);}catch(e){notify(String(e));} };
-    (async()=>{await ws.refresh(); await loadKbList();})();
-    return {dispose(){state.disposed=true;root.remove();}};
-  };
-}
-
-function createWorkspacePage(host) {
-  return (container) => {
-    const state={current:null}; const root=el("section","lk-page"); const header=el("header","lk-header"); const box=el("div"); box.append(el("h1","lk-title","Workspaces"),el("p","lk-subtitle","成员只使用 OpenClaw Profile；下游 Tenant / Account 由服务端映射。")); header.append(box); root.append(header); const ws=workspaceToolbar(host,state,()=>load()); root.append(ws.element); const body=el("div","lk-workspace-page"); root.append(body); container.append(root);
-    async function load(){ try{const current=await host.request("leeclaw.workspaces.current",{}); state.current=current; const [members,users]=await Promise.all([host.request("leeclaw.workspaces.members",{workspaceId:current.id}),host.request("users.list",{})]); const userMap=new Map((users?.profiles??[]).map(u=>[u.profileId,u])); const toolbar=el("div","lk-section-actions"); if(canOwn(current.role)&&host.connection.canAdmin){const add=button("添加成员"); add.onclick=async()=>{const profiles=users?.profiles??[]; const hint=profiles.slice(0,30).map(u=>`${u.profileId}: ${u.displayName??u.email??""}`).join("\n"); const profileId=window.prompt(`OpenClaw Profile ID：\n${hint}`); if(!profileId)return; const role=window.prompt("角色：owner/admin/editor/viewer","viewer")||"viewer"; const u=userMap.get(profileId); await host.request("leeclaw.workspaces.member.upsert",{workspaceId:current.id,profileId,role,displayName:u?.displayName??u?.email??""}); await load();}; toolbar.append(add);} const rows=el("div"); body.replaceChildren(toolbar,rows); const enriched=(members?.items??[]).map(m=>({...m,...(userMap.get(m.profileId)??{})})); renderRows(rows,enriched,canOwn(current.role)&&host.connection.canAdmin?[{label:"改角色",run:async m=>{const r=window.prompt("角色：owner/admin/editor/viewer",m.role); if(!r)return; await host.request("leeclaw.workspaces.member.upsert",{workspaceId:current.id,profileId:m.profileId,role:r,displayName:m.displayName??m.email??""}); await load();}},{label:"移除",when:m=>m.profileId!==current.userId,run:async m=>{if(confirmAction(`移除 ${nameOf(m)}？`)){await host.request("leeclaw.workspaces.member.remove",{workspaceId:current.id,profileId:m.profileId}); await load();}}}]:[]); }catch(e){body.replaceChildren(el("div","lk-error",String(e)));} }
-    (async()=>{await ws.refresh(); await load();})(); return {dispose:()=>root.remove()};
+    return { dispose() { disposed = true; root.remove(); } };
   };
 }
 
 export default defineControlUiPlugin({
-  id:"leeclaw-knowledge",
-  activate(host){ const regs=[host.ui.registerPage({id:"knowledge",label:"Knowledge",mount:createKnowledgePage(host)}),host.ui.registerNavigation({id:"knowledge",label:"Knowledge",page:{id:"knowledge"},icon:"bookOpen",order:30}),host.ui.registerPage({id:"workspaces",label:"Workspaces",mount:createWorkspacePage(host)}),host.ui.registerNavigation({id:"workspaces",label:"Workspaces",page:{id:"workspaces"},icon:"users",order:35})]; return()=>regs.toReversed().forEach(d=>d()); }
+  id: "leeclaw-knowledge",
+  activate(host) {
+    const disposePage = host.ui.registerPage({ id: "knowledge", label: "Knowledge", mount: createKnowledgePage(host) });
+    const disposeNavigation = host.ui.registerNavigation({ id: "knowledge", label: "Knowledge", page: { id: "knowledge" }, icon: "bookOpen", order: 30 });
+    return () => { disposeNavigation(); disposePage(); };
+  },
 });

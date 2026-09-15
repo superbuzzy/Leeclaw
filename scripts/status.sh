@@ -7,7 +7,8 @@ for url in \
   http://127.0.0.1:8081/ \
   http://127.0.0.1:1933/health \
   http://127.0.0.1:8090/healthz \
-  http://127.0.0.1:18789/health; do
+  http://127.0.0.1:18789/health \
+  http://127.0.0.1:18791/health; do
   code="$(curl -sS -o /dev/null -w '%{http_code}' --max-time 3 "$url" || true)"
   printf '%-40s %s\n' "$url" "$code"
 done

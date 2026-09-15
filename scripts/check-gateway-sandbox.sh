@@ -5,6 +5,7 @@ CONTAINER="${OPENCLAW_CONTAINER:-leeclaw-openclaw}"
 PROXY_CONTAINER="${LEECLAW_PROXY_CONTAINER:-leeclaw-auth-gateway}"
 GATEWAY_URL="${LEECLAW_EXTERNAL_GATEWAY_URL:-http://127.0.0.1:${OPENCLAW_GATEWAY_PORT:-18789}}"
 SANDBOX_URL="${LEECLAW_EXTERNAL_SANDBOX_URL:-http://127.0.0.1:${OPENCLAW_SANDBOX_PORT:-18790}}"
+KNOWLEDGE_URL="${LEECLAW_EXTERNAL_KNOWLEDGE_URL:-http://127.0.0.1:${LEECLAW_KNOWLEDGE_PORT:-18791}}"
 CONFIG="${OPENCLAW_CONFIG_PATH_HOST:-$ROOT/deploy/openclaw/state/openclaw.json}"
 
 fail() { echo "FAIL [sandbox:$1] $2" >&2; exit 1; }
@@ -28,6 +29,7 @@ done
 
 probe_external proxy-gateway "$GATEWAY_URL/health"
 probe_external proxy-sandbox "$SANDBOX_URL/"
+probe_external proxy-knowledge "$KNOWLEDGE_URL/health"
 
 node - "$CONFIG" "$SANDBOX_URL" <<'NODE' || fail browser-origin "configured origin/port does not match the browser-visible sandbox URL"
 const fs = require("node:fs");

@@ -33,14 +33,20 @@ services:
       LEECLAW_AUTH_UPSTREAM: http://172.30.250.2:18789
       LEECLAW_SANDBOX_LISTEN: ":18790"
       LEECLAW_SANDBOX_UPSTREAM: http://172.30.250.2:18790
-      LEECLAW_OPENCLAW_IDENTITY: ${LEECLAW_OPENCLAW_IDENTITY}
-      LEECLAW_OPENCLAW_ROLE: ${LEECLAW_OPENCLAW_ROLE:-owner}
-      OPENCLAW_GATEWAY_PASSWORD: ${OPENCLAW_GATEWAY_TOKEN}
+      LEECLAW_KNOWLEDGE_LISTEN: ":18791"
+      LEECLAW_KNOWLEDGE_UI_UPSTREAM: http://weknora-ui:80
+      LEECLAW_KNOWLEDGE_API_UPSTREAM: http://weknora:8080
+      LEECLAW_WEKNORA_TENANT_ID: "10000"
+      LEECLAW_RUNTIME_TOKEN: ${LEECLAW_RUNTIME_TOKEN}
+      WEKNORA_API_KEY_LEECLAW: ${WEKNORA_API_KEY_LEECLAW}
+      WEKNORA_BOOTSTRAP_EMAIL: ${WEKNORA_BOOTSTRAP_EMAIL}
+      WEKNORA_BOOTSTRAP_PASSWORD: ${WEKNORA_BOOTSTRAP_PASSWORD}
       LEECLAW_AUTH_SESSION_TTL: 12h
       LEECLAW_AUTH_COOKIE_SECURE: "false"
     ports:
       - "${OPENCLAW_GATEWAY_PORT:-18789}:18789"
       - "${OPENCLAW_SANDBOX_PORT:-18790}:18790"
+      - "${LEECLAW_KNOWLEDGE_PORT:-18791}:18791"
     restart: unless-stopped
     depends_on:
       openclaw-gateway:
@@ -48,7 +54,7 @@ services:
     healthcheck:
       # The sandbox listener deliberately returns 404 for an unknown root URL;
       # seeing an HTTP status still proves the listener and proxy path are live.
-      test: ["CMD-SHELL", "wget -q -O - http://127.0.0.1:18789/health >/dev/null && (wget -q -O /dev/null http://127.0.0.1:18790/ || wget -S -O /dev/null http://127.0.0.1:18790/ 2>&1 | grep -q 'HTTP/')"]
+      test: ["CMD-SHELL", "wget -q -O - http://127.0.0.1:18789/health >/dev/null && (wget -q -O /dev/null http://127.0.0.1:18790/ || wget -S -O /dev/null http://127.0.0.1:18790/ 2>&1 | grep -q 'HTTP/') && wget -q -O - http://127.0.0.1:18791/health >/dev/null"]
       interval: 20s
       timeout: 5s
       retries: 5

@@ -7,8 +7,8 @@ v0.10 的主题是 **Experience Promotion**：v0.9 已解决“该查哪里、�
 ## 架构边界
 
 ```text
-OpenClaw   = 原生 UI + Durable Profile + Agent Runtime + Tool Authority
-WeKnora    = 统一账号认证 + 企业 Knowledge Engine + 正式 Knowledge
+OpenClaw   = 唯一人类账号 + 原生 UI + Durable Profile + Agent Runtime + Tool Authority
+WeKnora    = 企业 Knowledge Engine + 正式 Knowledge
 OpenViking = Memory + Session + Experience + 正式 Skill
 LeeClaw    = Workspace + Ontology + Retrieval + Promotion + Governance
 ```
@@ -64,8 +64,7 @@ Agent Runtime 没有正式 Knowledge/Skill publish 或 rollback Tool。Promotion
 
 | 资产 | Source of Truth |
 |---|---|
-| 人类账号 / 密码 / 租户角色 | WeKnora |
-| Durable Profile / Agent Runtime | OpenClaw |
+| 人类账号 / 密码 / Durable Profile | OpenClaw |
 | Agent Runtime / Tool Authority | OpenClaw |
 | Workspace / Role / Session Binding | LeeClaw Workspace Core |
 | 正式 Knowledge / KB / RAG / Entity Graph | WeKnora |
@@ -124,17 +123,20 @@ cd cobra-knowledge
 
 首次启动会自动创建本地 WeKnora 管理员、租户、运行时 API Key，以及绑定默认模型的 `LeeClaw Knowledge` 知识库。登录信息保存在 `deploy/.env` 的 `WEKNORA_BOOTSTRAP_*` 项中。
 
-打开 `http://localhost:18789` 后，直接输入 WeKnora 邮箱和密码。LeeClaw Auth Gateway 会校验目标租户成员身份，将 WeKnora 的 `owner/admin/contributor/viewer` 角色映射为 OpenClaw 权限，并通过 HttpOnly 会话进入原样的 OpenClaw UI；浏览器不再需要保存或粘贴 Gateway Token。OpenClaw 本体不发布宿主机端口，只接受专用 Docker 内网中的认证代理请求。
+打开 `http://localhost:18789` 后使用 OpenClaw 原生 Login Gate 登录。OpenClaw 是唯一主账号；认证后的 Profile 由 Workspace Core 映射到 OpenViking account 和 WeKnora tenant/KB scope。浏览器不会获得 WeKnora API Key、tenant 或可信 workspace 字段。
+
+登录后左侧只新增一个 `Knowledge` 入口。该入口嵌入 WeKnora 原生知识库页面，知识库、文档、FAQ、Wiki、标签和图谱均沿用 WeKnora 原生交互；LeeClaw 只在服务端完成会话换票、身份映射和 API 凭据注入，不再维护一套平行 Knowledge UI。
 
 | 服务 | 本地地址 |
 |---|---|
 | LeeClaw / OpenClaw（主要入口） | http://localhost:18789 |
+| Knowledge 页面桥接（由 OpenClaw 自动使用） | http://localhost:18791 |
 | WeKnora 管理页（可选） | http://localhost:8081 |
 | LeeClaw Core 健康检查 | http://localhost:8090/healthz |
 | OpenViking 健康检查 | http://localhost:1933/health |
 | Neo4j Browser | http://localhost:7474 |
 
-日常使用只需打开 `http://localhost:18789`。WeKnora、Neo4j 和 OpenViking 的网页/接口是管理与诊断入口，不需要同时打开。`OPENCLAW_GATEWAY_TOKEN` 仅作为容器内部 CLI 的密码回退使用，不应粘贴到浏览器，也不要把任何密钥提交到版本库。
+日常使用只需打开 `http://localhost:18789`。18791 是原生 WeKnora 页面桥接端口，不是第二个登录入口；WeKnora、Neo4j 和 OpenViking 的直连网页/接口仅用于管理与诊断。不要把任何密钥提交到版本库。
 
 ## 当前边界
 

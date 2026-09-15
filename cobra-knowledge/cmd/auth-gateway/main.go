@@ -2,12 +2,13 @@ package main
 
 import (
 	"context"
+	"crypto/hmac"
 	"crypto/rand"
-	"crypto/subtle"
+	"crypto/sha256"
 	"encoding/base64"
+	"encoding/json"
 	"errors"
 	"fmt"
-	"html/template"
 	"io"
 	"log"
 	"net/http"
@@ -20,43 +21,37 @@ import (
 	"time"
 )
 
-const sessionCookie = "leeclaw_session"
+const knowledgeCookie = "leeclaw_knowledge_session"
 
 type config struct {
-	listenAddr         string
-	upstreamURL        *url.URL
-	sandboxListenAddr  string
-	sandboxUpstreamURL *url.URL
-	identity           string
-	password           string
-	role               string
-	cookieSecure       bool
-	sessionTTL         time.Duration
+	listenAddr, sandboxListenAddr, knowledgeListenAddr               string
+	upstreamURL, sandboxUpstreamURL, knowledgeUIURL, knowledgeAPIURL *url.URL
+	knowledgeSecret, weknoraAPIKey, weknoraTenantID                  string
+	weknoraEmail, weknoraPassword                                    string
+	cookieSecure                                                     bool
+	sessionTTL                                                       time.Duration
 }
 
 type session struct {
-	identity    string
-	role        string
-	expiresAt   time.Time
-	validatedAt time.Time
+	identity, workspaceID, weknoraToken string
+	expiresAt                           time.Time
 }
-
 type sessionStore struct {
 	mu       sync.RWMutex
 	sessions map[string]session
 }
+type ticketClaims struct {
+	ProfileID   string `json:"profileId"`
+	WorkspaceID string `json:"workspaceId"`
+	Exp         int64  `json:"exp"`
+	Nonce       string `json:"nonce"`
+}
+type sessionContextKey struct{}
 
 type server struct {
-	cfg          config
-	sessions     *sessionStore
-	proxy        *httputil.ReverseProxy
-	sandboxProxy *httputil.ReverseProxy
-	login        *template.Template
-}
-
-type loginPageData struct {
-	Error string
-	Next  string
+	cfg                                 config
+	sessions                            *sessionStore
+	proxy, sandboxProxy, knowledgeProxy *httputil.ReverseProxy
 }
 
 func main() {
@@ -64,298 +59,268 @@ func main() {
 	if err != nil {
 		log.Fatal(err)
 	}
-
 	s, err := newServer(cfg)
 	if err != nil {
 		log.Fatal(err)
 	}
-
-	errCh := make(chan error, 2)
+	errCh := make(chan error, 3)
 	go func() {
-		log.Printf("LeeClaw OpenClaw profile gateway listening on %s", cfg.listenAddr)
+		log.Printf("OpenClaw gateway proxy listening on %s", cfg.listenAddr)
 		errCh <- http.ListenAndServe(cfg.listenAddr, s.routes())
 	}()
 	go func() {
-		log.Printf("LeeClaw MCP Apps sandbox proxy listening on %s", cfg.sandboxListenAddr)
+		log.Printf("MCP Apps sandbox proxy listening on %s", cfg.sandboxListenAddr)
 		errCh <- http.ListenAndServe(cfg.sandboxListenAddr, s.sandboxRoutes())
+	}()
+	go func() {
+		log.Printf("Knowledge UI proxy listening on %s", cfg.knowledgeListenAddr)
+		errCh <- http.ListenAndServe(cfg.knowledgeListenAddr, s.knowledgeRoutes())
 	}()
 	log.Fatal(<-errCh)
 }
 
 func loadConfig() (config, error) {
-	cfg := config{
-		listenAddr:        envOr("LEECLAW_AUTH_LISTEN", ":18789"),
-		sandboxListenAddr: envOr("LEECLAW_SANDBOX_LISTEN", ":18790"),
-		identity:          envOr("LEECLAW_OPENCLAW_IDENTITY", ""),
-		password:          envOr("OPENCLAW_GATEWAY_PASSWORD", ""),
-		role:              envOr("LEECLAW_OPENCLAW_ROLE", "owner"),
-		cookieSecure:      envBool("LEECLAW_AUTH_COOKIE_SECURE", false),
-		sessionTTL:        12 * time.Hour,
+	c := config{
+		listenAddr:          envOr("LEECLAW_AUTH_LISTEN", ":18789"),
+		sandboxListenAddr:   envOr("LEECLAW_SANDBOX_LISTEN", ":18790"),
+		knowledgeListenAddr: envOr("LEECLAW_KNOWLEDGE_LISTEN", ":18791"),
+		knowledgeSecret:     strings.TrimSpace(os.Getenv("LEECLAW_RUNTIME_TOKEN")),
+		weknoraAPIKey:       strings.TrimSpace(os.Getenv("WEKNORA_API_KEY_LEECLAW")),
+		weknoraTenantID:     envOr("LEECLAW_WEKNORA_TENANT_ID", "10000"),
+		weknoraEmail:        strings.TrimSpace(os.Getenv("WEKNORA_BOOTSTRAP_EMAIL")),
+		weknoraPassword:     strings.TrimSpace(os.Getenv("WEKNORA_BOOTSTRAP_PASSWORD")),
+		cookieSecure:        envBool("LEECLAW_AUTH_COOKIE_SECURE", false), sessionTTL: 12 * time.Hour,
 	}
-
 	var err error
-	if cfg.upstreamURL, err = url.Parse(envOr("LEECLAW_AUTH_UPSTREAM", "http://openclaw-internal:18789")); err != nil {
-		return config{}, fmt.Errorf("invalid LEECLAW_AUTH_UPSTREAM: %w", err)
-	}
-	if cfg.sandboxUpstreamURL, err = url.Parse(envOr("LEECLAW_SANDBOX_UPSTREAM", "http://openclaw-internal:18790")); err != nil {
-		return config{}, fmt.Errorf("invalid LEECLAW_SANDBOX_UPSTREAM: %w", err)
-	}
-	if cfg.identity == "" {
-		return config{}, errors.New("LEECLAW_OPENCLAW_IDENTITY is required")
-	}
-	if cfg.password == "" {
-		return config{}, errors.New("OPENCLAW_GATEWAY_PASSWORD is required")
-	}
-	if ttlText := os.Getenv("LEECLAW_AUTH_SESSION_TTL"); ttlText != "" {
-		if cfg.sessionTTL, err = time.ParseDuration(ttlText); err != nil || cfg.sessionTTL <= 0 {
-			return config{}, fmt.Errorf("invalid LEECLAW_AUTH_SESSION_TTL %q", ttlText)
+	for target, raw := range map[**url.URL]string{
+		&c.upstreamURL:        envOr("LEECLAW_AUTH_UPSTREAM", "http://openclaw:18789"),
+		&c.sandboxUpstreamURL: envOr("LEECLAW_SANDBOX_UPSTREAM", "http://openclaw:18790"),
+		&c.knowledgeUIURL:     envOr("LEECLAW_KNOWLEDGE_UI_UPSTREAM", "http://weknora-ui:80"),
+		&c.knowledgeAPIURL:    envOr("LEECLAW_KNOWLEDGE_API_UPSTREAM", "http://weknora:8080"),
+	} {
+		*target, err = url.Parse(raw)
+		if err != nil {
+			return config{}, fmt.Errorf("invalid upstream %q: %w", raw, err)
 		}
 	}
-	return cfg, nil
+	if c.knowledgeSecret == "" || c.weknoraAPIKey == "" {
+		return config{}, errors.New("LEECLAW_RUNTIME_TOKEN and WEKNORA_API_KEY_LEECLAW are required")
+	}
+	if raw := os.Getenv("LEECLAW_AUTH_SESSION_TTL"); raw != "" {
+		c.sessionTTL, err = time.ParseDuration(raw)
+		if err != nil || c.sessionTTL <= 0 {
+			return config{}, fmt.Errorf("invalid session TTL %q", raw)
+		}
+	}
+	return c, nil
 }
 
-func newServer(cfg config) (*server, error) {
-	login, err := template.New("login").Parse(loginHTML)
-	if err != nil {
-		return nil, err
-	}
-	s := &server{
-		cfg:      cfg,
-		sessions: &sessionStore{sessions: make(map[string]session)},
-		login:    login,
-	}
-	s.proxy = &httputil.ReverseProxy{
-		Rewrite:       s.rewriteProxyRequest,
-		FlushInterval: -1,
+func newServer(c config) (*server, error) {
+	s := &server{cfg: c, sessions: &sessionStore{sessions: map[string]session{}}}
+	s.proxy = reverseProxy(c.upstreamURL, "OpenClaw", func(pr *httputil.ProxyRequest) { stripIdentity(pr.Out.Header); pr.SetXForwarded() }, nil)
+	s.sandboxProxy = reverseProxy(c.sandboxUpstreamURL, "MCP Apps sandbox", func(pr *httputil.ProxyRequest) { stripIdentity(pr.Out.Header); pr.SetXForwarded() }, nil)
+	s.knowledgeProxy = &httputil.ReverseProxy{
+		Rewrite:        s.rewriteKnowledge,
+		ModifyResponse: injectKnowledgeEmbedMode,
+		FlushInterval:  -1,
 		ErrorHandler: func(w http.ResponseWriter, _ *http.Request, err error) {
-			log.Printf("OpenClaw upstream error: %v", err)
-			http.Error(w, "OpenClaw 暂时不可用", http.StatusBadGateway)
+			log.Printf("Knowledge upstream error: %v", err)
+			http.Error(w, "Knowledge unavailable", http.StatusBadGateway)
 		},
 	}
-	s.sandboxProxy = &httputil.ReverseProxy{Rewrite: func(pr *httputil.ProxyRequest) {
-		pr.SetURL(cfg.sandboxUpstreamURL)
-		for _, header := range []string{"Forwarded", "X-Real-Ip", "X-Forwarded-For", "X-Forwarded-Host", "X-Forwarded-Proto", "X-Forwarded-User", "X-OpenClaw-Scopes"} {
-			pr.Out.Header.Del(header)
-		}
-		pr.SetXForwarded()
-	}, FlushInterval: -1, ErrorHandler: func(w http.ResponseWriter, _ *http.Request, err error) {
-		log.Printf("MCP Apps sandbox upstream error: %v", err)
-		http.Error(w, "MCP Apps sandbox proxy unavailable", http.StatusBadGateway)
-	}}
 	return s, nil
 }
 
-func (s *server) sandboxRoutes() http.Handler {
-	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) { s.sandboxProxy.ServeHTTP(w, r) })
+func reverseProxy(target *url.URL, name string, rewrite func(*httputil.ProxyRequest), modify func(*http.Response) error) *httputil.ReverseProxy {
+	return &httputil.ReverseProxy{Rewrite: func(pr *httputil.ProxyRequest) { pr.SetURL(target); rewrite(pr) }, ModifyResponse: modify, FlushInterval: -1, ErrorHandler: func(w http.ResponseWriter, _ *http.Request, err error) {
+		log.Printf("%s upstream error: %v", name, err)
+		http.Error(w, name+" unavailable", http.StatusBadGateway)
+	}}
 }
 
 func (s *server) routes() http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) { s.proxy.ServeHTTP(w, r) })
+}
+func (s *server) sandboxRoutes() http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) { s.sandboxProxy.ServeHTTP(w, r) })
+}
+func (s *server) knowledgeRoutes() http.Handler {
 	mux := http.NewServeMux()
 	mux.HandleFunc("GET /health", func(w http.ResponseWriter, _ *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
 		_, _ = io.WriteString(w, `{"status":"ok"}`)
 	})
-	mux.HandleFunc("GET /login", s.showLogin)
-	mux.HandleFunc("POST /auth/login", s.handleLogin)
-	mux.HandleFunc("POST /auth/logout", s.handleLogout)
-	mux.HandleFunc("/", s.requireSession)
-	return securityHeaders(mux)
+	mux.HandleFunc("GET /auth/session", s.exchangeKnowledgeTicket)
+	mux.HandleFunc("/", s.requireKnowledgeSession)
+	return knowledgeSecurityHeaders(mux)
 }
 
-func (s *server) showLogin(w http.ResponseWriter, r *http.Request) {
-	if _, _, ok := s.currentSession(r); ok {
-		http.Redirect(w, r, safeNext(r.URL.Query().Get("next")), http.StatusSeeOther)
-		return
-	}
-	s.renderLogin(w, loginPageData{Next: safeNext(r.URL.Query().Get("next"))})
-}
-
-func (s *server) handleLogin(w http.ResponseWriter, r *http.Request) {
-	if !sameOrigin(r) {
-		http.Error(w, "invalid origin", http.StatusForbidden)
-		return
-	}
-	r.Body = http.MaxBytesReader(w, r.Body, 16<<10)
-	if err := r.ParseForm(); err != nil {
-		s.renderLogin(w, loginPageData{Error: "登录请求格式不正确", Next: "/"})
-		return
-	}
-	password := r.FormValue("password")
-	next := safeNext(r.FormValue("next"))
-	if password == "" {
-		s.renderLogin(w, loginPageData{Error: "请输入 OpenClaw 密码", Next: next})
-		return
-	}
-
-	auth, err := s.authenticate(password)
+func (s *server) exchangeKnowledgeTicket(w http.ResponseWriter, r *http.Request) {
+	claims, err := verifyTicket(r.URL.Query().Get("ticket"), s.cfg.knowledgeSecret)
 	if err != nil {
-		log.Printf("OpenClaw profile login rejected: %v", err)
-		s.renderLogin(w, loginPageData{Error: "OpenClaw 密码不正确", Next: next})
+		http.Error(w, "invalid or expired Knowledge session", http.StatusUnauthorized)
 		return
 	}
-
 	id, err := randomID()
 	if err != nil {
-		http.Error(w, "无法创建登录会话", http.StatusInternalServerError)
+		http.Error(w, "session creation failed", http.StatusInternalServerError)
 		return
 	}
-	s.sessions.put(id, session{
-		identity:    auth.identity,
-		role:        auth.role,
-		expiresAt:   time.Now().Add(s.cfg.sessionTTL),
-		validatedAt: time.Now(),
-	})
-	http.SetCookie(w, &http.Cookie{
-		Name:     sessionCookie,
-		Value:    id,
-		Path:     "/",
-		HttpOnly: true,
-		Secure:   s.cfg.cookieSecure,
-		SameSite: http.SameSiteLaxMode,
-		MaxAge:   int(s.cfg.sessionTTL.Seconds()),
-	})
-	http.Redirect(w, r, next, http.StatusSeeOther)
-}
-
-func (s *server) handleLogout(w http.ResponseWriter, r *http.Request) {
-	if !sameOrigin(r) {
-		http.Error(w, "invalid origin", http.StatusForbidden)
+	weknoraToken, err := s.createWeKnoraSession(r.Context())
+	if err != nil {
+		log.Printf("Knowledge session mapping failed for profile %q: %v", claims.ProfileID, err)
+		http.Error(w, "Knowledge identity mapping unavailable", http.StatusBadGateway)
 		return
 	}
-	if cookie, err := r.Cookie(sessionCookie); err == nil {
-		s.sessions.delete(cookie.Value)
-	}
-	clearSessionCookie(w, s.cfg.cookieSecure)
-	http.Redirect(w, r, "/login", http.StatusSeeOther)
+	expires := time.Now().Add(s.cfg.sessionTTL)
+	s.sessions.put(id, session{identity: claims.ProfileID, workspaceID: claims.WorkspaceID, weknoraToken: weknoraToken, expiresAt: expires})
+	http.SetCookie(w, &http.Cookie{Name: knowledgeCookie, Value: id, Path: "/", HttpOnly: true, Secure: s.cfg.cookieSecure, SameSite: http.SameSiteLaxMode, Expires: expires, MaxAge: int(s.cfg.sessionTTL.Seconds())})
+	w.Header().Set("Cache-Control", "no-store")
+	http.Redirect(w, r, safeKnowledgeNext(r.URL.Query().Get("next")), http.StatusSeeOther)
 }
 
-func (s *server) requireSession(w http.ResponseWriter, r *http.Request) {
-	id, sess, ok := s.currentSession(r)
-	if !ok {
-		s.unauthorized(w, r)
+func (s *server) requireKnowledgeSession(w http.ResponseWriter, r *http.Request) {
+	cookie, err := r.Cookie(knowledgeCookie)
+	if err != nil {
+		http.Error(w, "Knowledge authentication required", http.StatusUnauthorized)
 		return
-	}
-	if time.Since(sess.validatedAt) > 30*time.Second {
-		updated, err := s.validateSession(sess)
-		if err != nil {
-			s.sessions.delete(id)
-			clearSessionCookie(w, s.cfg.cookieSecure)
-			s.unauthorized(w, r)
-			return
-		}
-		sess = updated
-		s.sessions.put(id, sess)
-	}
-	r = r.WithContext(context.WithValue(r.Context(), sessionContextKey{}, sess))
-	s.proxy.ServeHTTP(w, r)
-}
-
-func (s *server) unauthorized(w http.ResponseWriter, r *http.Request) {
-	if r.Method == http.MethodGet && acceptsHTML(r) {
-		http.Redirect(w, r, "/login?next="+url.QueryEscape(safeNext(r.URL.RequestURI())), http.StatusSeeOther)
-		return
-	}
-	http.Error(w, "authentication required", http.StatusUnauthorized)
-}
-
-func (s *server) rewriteProxyRequest(pr *httputil.ProxyRequest) {
-	sess, _ := pr.In.Context().Value(sessionContextKey{}).(session)
-	originalHost := pr.In.Host
-	pr.SetURL(s.cfg.upstreamURL)
-	for _, header := range []string{
-		"Forwarded", "X-Real-Ip", "X-Forwarded-For", "X-Forwarded-Host", "X-Forwarded-Proto",
-		"X-Forwarded-User", "X-Forwarded-Email", "X-Openclaw-Scopes",
-		"X-OpenClaw-Scopes", "X-Remote-User", "Remote-User",
-	} {
-		pr.Out.Header.Del(header)
-	}
-	pr.SetXForwarded()
-	pr.Out.Header.Set("X-Forwarded-User", sess.identity)
-	pr.Out.Header.Set("X-Forwarded-Host", originalHost)
-	if pr.In.TLS != nil {
-		pr.Out.Header.Set("X-Forwarded-Proto", "https")
-	} else {
-		pr.Out.Header.Set("X-Forwarded-Proto", "http")
-	}
-	pr.Out.Header.Set("X-OpenClaw-Scopes", scopesForRole(sess.role))
-}
-
-type authenticatedUser struct {
-	identity string
-	role     string
-}
-
-func (s *server) authenticate(password string) (authenticatedUser, error) {
-	if subtle.ConstantTimeCompare([]byte(password), []byte(s.cfg.password)) != 1 {
-		return authenticatedUser{}, errors.New("invalid credentials")
-	}
-	return authenticatedUser{identity: s.cfg.identity, role: s.cfg.role}, nil
-}
-
-func (s *server) validateSession(sess session) (session, error) {
-	if time.Now().After(sess.expiresAt) {
-		return session{}, errors.New("session expired")
-	}
-	if sess.identity != s.cfg.identity {
-		return session{}, errors.New("OpenClaw identity binding changed")
-	}
-	sess.validatedAt = time.Now()
-	return sess, nil
-}
-
-func scopesForRole(role string) string {
-	switch strings.ToLower(role) {
-	case "owner", "admin":
-		return "operator.admin,operator.read,operator.write,operator.approvals,operator.questions,operator.pairing,operator.talk.secrets"
-	case "contributor", "editor":
-		return "operator.read,operator.write,operator.approvals,operator.questions"
-	default:
-		return "operator.read"
-	}
-}
-
-func (s *server) currentSession(r *http.Request) (string, session, bool) {
-	cookie, err := r.Cookie(sessionCookie)
-	if err != nil || cookie.Value == "" {
-		return "", session{}, false
 	}
 	sess, ok := s.sessions.get(cookie.Value)
 	if !ok || time.Now().After(sess.expiresAt) {
-		if ok {
-			s.sessions.delete(cookie.Value)
+		s.sessions.delete(cookie.Value)
+		http.Error(w, "Knowledge session expired", http.StatusUnauthorized)
+		return
+	}
+	r = r.WithContext(context.WithValue(r.Context(), sessionContextKey{}, sess))
+	s.knowledgeProxy.ServeHTTP(w, r)
+}
+
+func (s *server) rewriteKnowledge(pr *httputil.ProxyRequest) {
+	sess, _ := pr.In.Context().Value(sessionContextKey{}).(session)
+	api := strings.HasPrefix(pr.In.URL.Path, "/api/") || strings.HasPrefix(pr.In.URL.Path, "/files") || strings.HasPrefix(pr.In.URL.Path, "/r/")
+	if api {
+		pr.SetURL(s.cfg.knowledgeAPIURL)
+	} else {
+		pr.SetURL(s.cfg.knowledgeUIURL)
+		pr.Out.Header.Del("Accept-Encoding")
+	}
+	stripIdentity(pr.Out.Header)
+	for _, h := range []string{"Authorization", "X-API-Key", "X-Tenant-ID", "X-External-User-ID", "X-External-User-Token"} {
+		pr.Out.Header.Del(h)
+	}
+	if api {
+		if sess.weknoraToken != "" {
+			pr.Out.Header.Set("Authorization", "Bearer "+sess.weknoraToken)
+		} else {
+			pr.Out.Header.Set("X-API-Key", s.cfg.weknoraAPIKey)
 		}
-		return "", session{}, false
+		pr.Out.Header.Set("X-Tenant-ID", s.cfg.weknoraTenantID)
+		pr.Out.Header.Set("X-External-User-ID", sess.identity)
 	}
-	return cookie.Value, sess, true
+	pr.SetXForwarded()
 }
 
-func (s *server) renderLogin(w http.ResponseWriter, data loginPageData) {
-	w.Header().Set("Content-Type", "text/html; charset=utf-8")
-	w.WriteHeader(http.StatusOK)
-	if err := s.login.Execute(w, data); err != nil {
-		log.Printf("render login page: %v", err)
+func (s *server) createWeKnoraSession(ctx context.Context) (string, error) {
+	if s.cfg.weknoraEmail == "" || s.cfg.weknoraPassword == "" {
+		return "", nil
+	}
+	payload, err := json.Marshal(map[string]string{"email": s.cfg.weknoraEmail, "password": s.cfg.weknoraPassword})
+	if err != nil {
+		return "", err
+	}
+	loginURL := *s.cfg.knowledgeAPIURL
+	loginURL.Path = strings.TrimRight(loginURL.Path, "/") + "/api/v1/auth/login"
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost, loginURL.String(), strings.NewReader(string(payload)))
+	if err != nil {
+		return "", err
+	}
+	req.Header.Set("Content-Type", "application/json")
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		return "", err
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		return "", fmt.Errorf("WeKnora login returned HTTP %d", resp.StatusCode)
+	}
+	var result struct {
+		Token        string `json:"token"`
+		ActiveTenant struct {
+			ID json.Number `json:"id"`
+		} `json:"active_tenant"`
+	}
+	decoder := json.NewDecoder(io.LimitReader(resp.Body, 1<<20))
+	decoder.UseNumber()
+	if err := decoder.Decode(&result); err != nil {
+		return "", err
+	}
+	if result.Token == "" {
+		return "", errors.New("WeKnora login response has no token")
+	}
+	if tenant := result.ActiveTenant.ID.String(); tenant != "" && tenant != s.cfg.weknoraTenantID {
+		return "", fmt.Errorf("WeKnora tenant mismatch: expected %s, got %s", s.cfg.weknoraTenantID, tenant)
+	}
+	return result.Token, nil
+}
+
+func injectKnowledgeEmbedMode(resp *http.Response) error {
+	// WeKnora may protect its standalone UI with SAMEORIGIN. LeeClaw deliberately
+	// serves the authenticated native page from :18791 inside OpenClaw on :18789.
+	resp.Header.Del("X-Frame-Options")
+	resp.Header.Del("Content-Security-Policy")
+	if !strings.Contains(resp.Header.Get("Content-Type"), "text/html") {
+		return nil
+	}
+	body, err := io.ReadAll(resp.Body)
+	if err != nil {
+		return err
+	}
+	_ = resp.Body.Close()
+	injection := `<style>html.leeclaw-embed .aside_box{display:none!important}html.leeclaw-embed .platform-route-outlet{width:100%!important}html.leeclaw-embed .main{min-width:0!important}</style><script>(function(){if(new URLSearchParams(location.search).has('leeclaw_embed'))document.documentElement.classList.add('leeclaw-embed');localStorage.setItem('weknora_token','leeclaw-workspace-session');localStorage.setItem('weknora_lite_mode','false')})()</script>`
+	body = []byte(strings.Replace(string(body), "</head>", injection+"</head>", 1))
+	resp.Body = io.NopCloser(strings.NewReader(string(body)))
+	resp.ContentLength = int64(len(body))
+	resp.Header.Set("Content-Length", strconv.Itoa(len(body)))
+	resp.Header.Del("Content-Encoding")
+	return nil
+}
+
+func verifyTicket(ticket, secret string) (ticketClaims, error) {
+	parts := strings.Split(ticket, ".")
+	if len(parts) != 2 {
+		return ticketClaims{}, errors.New("malformed ticket")
+	}
+	want := hmac.New(sha256.New, []byte(secret))
+	_, _ = want.Write([]byte(parts[0]))
+	got, err := base64.RawURLEncoding.DecodeString(parts[1])
+	if err != nil || !hmac.Equal(got, want.Sum(nil)) {
+		return ticketClaims{}, errors.New("invalid signature")
+	}
+	raw, err := base64.RawURLEncoding.DecodeString(parts[0])
+	if err != nil {
+		return ticketClaims{}, err
+	}
+	var claims ticketClaims
+	if err := json.Unmarshal(raw, &claims); err != nil {
+		return ticketClaims{}, err
+	}
+	if claims.ProfileID == "" || claims.WorkspaceID == "" || claims.Nonce == "" || claims.Exp < time.Now().Unix() || claims.Exp > time.Now().Add(2*time.Minute).Unix() {
+		return ticketClaims{}, errors.New("invalid claims")
+	}
+	return claims, nil
+}
+
+func stripIdentity(h http.Header) {
+	for _, k := range []string{"Forwarded", "X-Real-Ip", "X-Forwarded-For", "X-Forwarded-Host", "X-Forwarded-Proto", "X-Forwarded-User", "X-OpenClaw-Scopes", "X-Remote-User", "Remote-User"} {
+		h.Del(k)
 	}
 }
-
-func (s *sessionStore) get(id string) (session, bool) {
-	s.mu.RLock()
-	defer s.mu.RUnlock()
-	sess, ok := s.sessions[id]
-	return sess, ok
+func safeKnowledgeNext(next string) string {
+	if !strings.HasPrefix(next, "/platform/knowledge-bases") {
+		return "/platform/knowledge-bases?leeclaw_embed=1"
+	}
+	return next
 }
-
-func (s *sessionStore) put(id string, sess session) {
-	s.mu.Lock()
-	defer s.mu.Unlock()
-	s.sessions[id] = sess
-}
-
-func (s *sessionStore) delete(id string) {
-	s.mu.Lock()
-	defer s.mu.Unlock()
-	delete(s.sessions, id)
-}
-
 func randomID() (string, error) {
 	b := make([]byte, 32)
 	if _, err := rand.Read(b); err != nil {
@@ -363,100 +328,39 @@ func randomID() (string, error) {
 	}
 	return base64.RawURLEncoding.EncodeToString(b), nil
 }
-
-func safeNext(next string) string {
-	if !strings.HasPrefix(next, "/") || strings.HasPrefix(next, "//") {
-		return "/"
-	}
-	return next
+func (s *sessionStore) get(id string) (session, bool) {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	value, ok := s.sessions[id]
+	return value, ok
 }
-
-func sameOrigin(r *http.Request) bool {
-	origin := r.Header.Get("Origin")
-	if origin == "" {
-		return true
-	}
-	u, err := url.Parse(origin)
-	return err == nil && strings.EqualFold(u.Host, r.Host)
+func (s *sessionStore) put(id string, value session) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.sessions[id] = value
 }
-
-func acceptsHTML(r *http.Request) bool {
-	return strings.Contains(r.Header.Get("Accept"), "text/html") || r.Header.Get("Accept") == ""
-}
-
-func clearSessionCookie(w http.ResponseWriter, secure bool) {
-	http.SetCookie(w, &http.Cookie{
-		Name:     sessionCookie,
-		Value:    "",
-		Path:     "/",
-		HttpOnly: true,
-		Secure:   secure,
-		SameSite: http.SameSiteLaxMode,
-		MaxAge:   -1,
-	})
-}
-
-func securityHeaders(next http.Handler) http.Handler {
-	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		w.Header().Set("X-Content-Type-Options", "nosniff")
-		w.Header().Set("X-Frame-Options", "DENY")
-		w.Header().Set("Referrer-Policy", "same-origin")
-		next.ServeHTTP(w, r)
-	})
-}
-
+func (s *sessionStore) delete(id string) { s.mu.Lock(); defer s.mu.Unlock(); delete(s.sessions, id) }
 func envOr(name, fallback string) string {
 	if value := strings.TrimSpace(os.Getenv(name)); value != "" {
 		return value
 	}
 	return fallback
 }
-
 func envBool(name string, fallback bool) bool {
-	value := strings.TrimSpace(os.Getenv(name))
-	if value == "" {
+	raw := strings.TrimSpace(os.Getenv(name))
+	if raw == "" {
 		return fallback
 	}
-	parsed, err := strconv.ParseBool(value)
+	value, err := strconv.ParseBool(raw)
 	if err != nil {
 		return fallback
 	}
-	return parsed
+	return value
 }
-
-type sessionContextKey struct{}
-
-const loginHTML = `<!doctype html>
-<html lang="zh-CN">
-<head>
-  <meta charset="utf-8">
-  <meta name="viewport" content="width=device-width,initial-scale=1">
-  <title>登录 LeeClaw</title>
-  <style>
-    :root { color-scheme: dark; font-family: Inter, ui-sans-serif, system-ui, sans-serif; }
-    * { box-sizing: border-box; }
-    body { margin: 0; min-height: 100vh; display: grid; place-items: center; background: #090b10; color: #f3f4f6; }
-    main { width: min(400px, calc(100vw - 32px)); padding: 32px; border: 1px solid #272b35; border-radius: 16px; background: #11141b; box-shadow: 0 24px 80px #0008; }
-    h1 { margin: 0 0 8px; font-size: 25px; }
-    p { margin: 0 0 26px; color: #9ca3af; font-size: 14px; line-height: 1.5; }
-    label { display: block; margin: 16px 0 7px; color: #d1d5db; font-size: 13px; }
-    input { width: 100%; padding: 12px 13px; border: 1px solid #343947; border-radius: 9px; background: #0b0e14; color: #fff; font: inherit; outline: none; }
-    input:focus { border-color: #7c8cff; box-shadow: 0 0 0 3px #596cff25; }
-    button { width: 100%; margin-top: 24px; padding: 12px; border: 0; border-radius: 9px; background: #6576f7; color: #fff; font: inherit; font-weight: 650; cursor: pointer; }
-    button:hover { background: #7484ff; }
-    .error { margin: 0 0 12px; padding: 10px 12px; border-radius: 8px; background: #7f1d1d55; color: #fecaca; }
-    small { display: block; margin-top: 18px; color: #6b7280; text-align: center; }
-  </style>
-</head>
-<body><main>
-  <h1>LeeClaw</h1>
-  <p>使用 OpenClaw / LeeClaw 密码登录。Workspace、OpenViking 与 WeKnora 范围由服务端根据 OpenClaw Profile 绑定。</p>
-  {{if .Error}}<div class="error">{{.Error}}</div>{{end}}
-  <form method="post" action="/auth/login">
-    <input type="hidden" name="next" value="{{.Next}}">
-    <label for="password">密码</label>
-    <input id="password" name="password" type="password" autocomplete="current-password" required autofocus>
-    <button type="submit">登录</button>
-  </form>
-  <small>OpenClaw 是唯一人类身份；后端凭据不会发送到浏览器</small>
-</main></body></html>`
+func knowledgeSecurityHeaders(next http.Handler) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("X-Content-Type-Options", "nosniff")
+		w.Header().Set("Referrer-Policy", "same-origin")
+		next.ServeHTTP(w, r)
+	})
+}

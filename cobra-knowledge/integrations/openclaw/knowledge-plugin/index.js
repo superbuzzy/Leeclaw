@@ -1,4 +1,5 @@
 import { definePluginEntry } from "openclaw/plugin-sdk/plugin-entry";
+import { createHmac, randomBytes } from "node:crypto";
 import { AuditLog } from "./lib/audit-log.js";
 import { createKnowledgeRuntimeTool } from "./lib/agent-tools.js";
 import { ContextRuntimeClient } from "./lib/context-runtime-client.js";
@@ -82,10 +83,16 @@ export default definePluginEntry({
       description: "Knowledge bases, documents, Wiki, FAQ, graph, sharing and workspace access.",
       icon: "bookOpen", group: "control", requiredScopes: ["operator.read"],
     });
-    api.session.controls.registerControlUiDescriptor({
-      surface: "tab", id: "workspaces", label: "Workspaces",
-      description: "OpenClaw-profile workspace membership and downstream resource mapping.",
-      icon: "users", group: "control", requiredScopes: ["operator.read"],
+    registerMethod(api, "leeclaw.knowledge.webSession", "operator.read", (options) => {
+      const ctx = principal(options, "viewer");
+      const payload = Buffer.from(JSON.stringify({
+        profileId: ctx.userId,
+        workspaceId: ctx.workspaceId,
+        exp: Math.floor(Date.now() / 1000) + 60,
+        nonce: randomBytes(12).toString("base64url"),
+      })).toString("base64url");
+      const signature = createHmac("sha256", config.runtimeToken).update(payload).digest("base64url");
+      return { ticket: `${payload}.${signature}`, expiresIn: 60 };
     });
 
     registerMethod(api, "leeclaw.workspaces.list", "operator.read", (options) => ({ items: workspaces.listFor(profileId(options)) }));

@@ -9,6 +9,6 @@ RUN test -z "$(gofmt -l ./cmd/auth-gateway)" && \
 FROM alpine:3.21
 RUN apk add --no-cache ca-certificates
 COPY --from=build /out/leeclaw-auth-gateway /usr/local/bin/leeclaw-auth-gateway
-EXPOSE 18789 18790
+EXPOSE 18789 18790 18791
 USER 65532:65532
 ENTRYPOINT ["leeclaw-auth-gateway"]

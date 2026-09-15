@@ -1,10 +1,12 @@
-# leeclaw-knowledge v0.8
+# leeclaw-knowledge v0.10.1
 
-OpenClaw 原生 Knowledge 管理 + Agent Knowledge Runtime。
+OpenClaw 单一 Knowledge 导航 + WeKnora 原生 Knowledge 页面 + Agent Knowledge Runtime。
 
 ## 管理面
 
-保留 Knowledge Base、Document、Wiki、FAQ、Tag、Share、Entity/Ontology Graph、Audit 和 Workspace 管理。
+插件不再复制 Knowledge UI。认证后的 OpenClaw Profile 向服务端申请短时签名票据，经 `18791` 换取 HttpOnly Workspace 会话后嵌入 WeKnora 原生知识库页面。Knowledge Base、Document、Wiki、FAQ、Tag、Share 和 Entity Graph 均保留 WeKnora 原生交互；浏览器不能提交可信 Workspace、Tenant 或 API Key。
+
+插件不注册 Memory、Skills 或 Workspaces 侧栏项；这些能力继续作为 OpenViking/Workspace Core 后端供 Agent Runtime 使用。
 
 ## Agent Runtime
 

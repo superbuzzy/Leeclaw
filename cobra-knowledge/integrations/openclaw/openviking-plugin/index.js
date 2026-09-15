@@ -24,8 +24,6 @@ export default definePluginEntry({
     const memory = new LeeClawMemoryService(client);
     const principal = (options) => openVikingPrincipal(options.client, workspaces, requestedWorkspace(options));
 
-    api.session.controls.registerControlUiDescriptor({ surface: "tab", id: "memory", label: "Memory", icon: "brain", group: "control", requiredScopes: ["operator.read"] });
-    api.session.controls.registerControlUiDescriptor({ surface: "tab", id: "skills", label: "Skills", icon: "puzzle", group: "control", requiredScopes: ["operator.read"] });
 
     registerMethod(api, "leeclaw.memory.workspace", "operator.read", (options) => {
       const p = principal(options); return { id: p.workspaceId, name: p.workspaceName, role: p.workspaceRole, userId: p.userId };

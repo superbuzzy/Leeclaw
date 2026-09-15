@@ -1,1 +1,29 @@
-.lk-page{padding:24px;display:flex;flex-direction:column;gap:16px;min-height:100%;box-sizing:border-box}.lk-header{display:flex;justify-content:space-between;align-items:flex-start;gap:20px}.lk-title{margin:0;font-size:26px}.lk-subtitle{margin:6px 0 0;opacity:.68;max-width:820px}.lk-actions,.lk-section-actions,.lk-workspace-toolbar,.lk-row-actions{display:flex;gap:8px;align-items:center;flex-wrap:wrap}.lk-button,.lk-mini-button{border:1px solid var(--border,#d0d5dd);background:var(--accent,#147d64);color:white;border-radius:8px;padding:8px 12px;cursor:pointer}.lk-button-secondary,.lk-mini-button{background:transparent;color:inherit}.lk-mini-button{padding:5px 8px;font-size:12px}.lk-danger{background:#b42318}.lk-button:disabled{opacity:.45;cursor:not-allowed}.lk-workspace-toolbar{padding:10px 12px;border:1px solid var(--border,#d0d5dd);border-radius:10px;background:var(--surface,#fff)}.lk-workspace-label{font-weight:600}.lk-role-badge,.lk-badge{border-radius:999px;padding:3px 8px;background:rgba(20,125,100,.12);font-size:12px}.lk-layout{display:grid;grid-template-columns:260px minmax(0,1fr);gap:16px;min-height:620px}.lk-sidebar,.lk-main,.lk-card,.lk-form-card,.lk-search-panel{border:1px solid var(--border,#d0d5dd);border-radius:12px;background:var(--surface,#fff)}.lk-sidebar{padding:10px}.lk-side-head{font-weight:700;padding:8px}.lk-kb-list{display:flex;flex-direction:column;gap:6px}.lk-kb{display:flex;flex-direction:column;align-items:flex-start;border:0;background:transparent;color:inherit;text-align:left;border-radius:8px;padding:9px;width:100%;cursor:pointer}.lk-kb:hover,.lk-kb.is-active{background:rgba(20,125,100,.1)}.lk-kb-meta,.lk-row-sub{font-size:12px;opacity:.62;margin-top:4px}.lk-main{padding:16px;overflow:hidden}.lk-empty-panel,.lk-empty,.lk-loading{padding:24px;opacity:.6}.lk-detail-head{margin-bottom:12px}.lk-detail-title{margin:0}.lk-detail-desc{margin:5px 0 0;opacity:.65}.lk-tabs{display:flex;gap:6px;flex-wrap:wrap;border-bottom:1px solid var(--border,#d0d5dd);padding-bottom:10px}.lk-tab{border:0;background:transparent;color:inherit;padding:7px 10px;border-radius:7px;cursor:pointer}.lk-tab.is-active{background:rgba(20,125,100,.12);font-weight:700}.lk-content{padding-top:14px}.lk-row{display:flex;gap:12px;align-items:center;border-bottom:1px solid var(--border,#e4e7ec);padding:11px 4px}.lk-row-main{min-width:0;flex:1}.lk-row-title{font-weight:600;overflow-wrap:anywhere}.lk-error{padding:12px;color:#b42318;background:rgba(180,35,24,.08);border-radius:8px}.lk-input,.lk-textarea{width:100%;box-sizing:border-box;border:1px solid var(--border,#d0d5dd);background:transparent;color:inherit;border-radius:8px;padding:8px}.lk-textarea{min-height:120px;resize:vertical}.lk-field{display:flex;flex-direction:column;gap:5px}.lk-field-label{font-size:12px;font-weight:600;opacity:.75}.lk-form-card,.lk-search-panel{padding:16px;display:flex;flex-direction:column;gap:12px;max-width:760px}.lk-file{display:none}.lk-json{white-space:pre-wrap;overflow:auto;max-height:520px;background:rgba(127,127,127,.08);padding:12px;border-radius:8px}.lk-graph-svg{width:100%;min-height:500px}.lk-edge{stroke:currentColor;stroke-opacity:.2}.lk-node{fill:rgba(20,125,100,.25);stroke:rgba(20,125,100,.7)}.lk-node-property{fill:rgba(66,133,244,.2);stroke:rgba(66,133,244,.7)}.lk-node-label{font-size:12px;text-anchor:middle;fill:currentColor}.lk-graph-meta{font-size:12px;opacity:.6}.lk-workspace-page{border:1px solid var(--border,#d0d5dd);border-radius:12px;padding:16px}.lk-card{padding:14px}@media(max-width:900px){.lk-layout{grid-template-columns:1fr}.lk-sidebar{max-height:220px;overflow:auto}.lk-header{flex-direction:column}}
+.leeclaw-knowledge-native {
+  position: relative;
+  width: 100%;
+  height: 100%;
+  min-height: 640px;
+  overflow: hidden;
+  background: var(--background, #f5f6f7);
+}
+
+.leeclaw-knowledge-frame {
+  width: 100%;
+  height: 100%;
+  min-height: 640px;
+  border: 0;
+  background: #fff;
+}
+
+.leeclaw-knowledge-loading,
+.leeclaw-knowledge-error {
+  position: absolute;
+  inset: 0;
+  z-index: 1;
+  display: grid;
+  place-items: center;
+  color: var(--muted-foreground, #667085);
+  background: var(--background, #f5f6f7);
+}
+
+.leeclaw-knowledge-error { color: #b42318; }
