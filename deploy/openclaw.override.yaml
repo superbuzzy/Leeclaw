@@ -1,0 +1,82 @@
+services:
+  openclaw-gateway:
+    container_name: leeclaw-openclaw
+    build:
+      args:
+        OPENCLAW_EXTENSIONS: canvas,diffs,diffs-language-pack,discord,workboard,leeclaw-knowledge,leeclaw-openviking,leeclaw-promotion
+        OPENCLAW_IMAGE_APT_PACKAGES: chromium fonts-noto-cjk fonts-noto-color-emoji fontconfig
+    environment:
+      DEEPSEEK_API_KEY: ${DEEPSEEK_API_KEY}
+      OPENCLAW_GATEWAY_TOKEN: ""
+      OPENCLAW_GATEWAY_PASSWORD: ${OPENCLAW_GATEWAY_TOKEN}
+      LEECLAW_RUNTIME_TOKEN: ${LEECLAW_RUNTIME_TOKEN}
+      LEECLAW_PROMOTION_TOKEN: ${LEECLAW_PROMOTION_TOKEN}
+      OPENVIKING_ROOT_API_KEY: ${OPENVIKING_ROOT_API_KEY}
+      WEKNORA_API_KEY_LEECLAW: ${WEKNORA_API_KEY_LEECLAW:-}
+    volumes:
+      - ../../deploy/leeclaw/workspaces.json:/etc/leeclaw/workspaces.json:rw
+    ports: !reset []
+    networks:
+      leeclaw:
+        aliases: [openclaw]
+      auth-private:
+        ipv4_address: 172.30.250.2
+
+  auth-gateway:
+    image: leeclaw/auth-gateway:0.10.1
+    build:
+      context: ../../cobra-knowledge
+      dockerfile: ../deploy/auth-gateway.Dockerfile
+    container_name: leeclaw-auth-gateway
+    environment:
+      LEECLAW_AUTH_LISTEN: ":18789"
+      LEECLAW_AUTH_UPSTREAM: http://172.30.250.2:18789
+      LEECLAW_SANDBOX_LISTEN: ":18790"
+      LEECLAW_SANDBOX_UPSTREAM: http://172.30.250.2:18790
+      LEECLAW_OPENCLAW_IDENTITY: ${LEECLAW_OPENCLAW_IDENTITY}
+      LEECLAW_OPENCLAW_ROLE: ${LEECLAW_OPENCLAW_ROLE:-owner}
+      OPENCLAW_GATEWAY_PASSWORD: ${OPENCLAW_GATEWAY_TOKEN}
+      LEECLAW_AUTH_SESSION_TTL: 12h
+      LEECLAW_AUTH_COOKIE_SECURE: "false"
+    ports:
+      - "${OPENCLAW_GATEWAY_PORT:-18789}:18789"
+      - "${OPENCLAW_SANDBOX_PORT:-18790}:18790"
+    restart: unless-stopped
+    depends_on:
+      openclaw-gateway:
+        condition: service_healthy
+    healthcheck:
+      # The sandbox listener deliberately returns 404 for an unknown root URL;
+      # seeing an HTTP status still proves the listener and proxy path are live.
+      test: ["CMD-SHELL", "wget -q -O - http://127.0.0.1:18789/health >/dev/null && (wget -q -O /dev/null http://127.0.0.1:18790/ || wget -S -O /dev/null http://127.0.0.1:18790/ 2>&1 | grep -q 'HTTP/')"]
+      interval: 20s
+      timeout: 5s
+      retries: 5
+      start_period: 5s
+    networks:
+      leeclaw: {}
+      auth-private:
+        ipv4_address: 172.30.250.3
+
+  openclaw-cli:
+    environment:
+      DEEPSEEK_API_KEY: ${DEEPSEEK_API_KEY}
+      OPENCLAW_GATEWAY_TOKEN: ""
+      OPENCLAW_GATEWAY_PASSWORD: ${OPENCLAW_GATEWAY_TOKEN}
+      LEECLAW_RUNTIME_TOKEN: ${LEECLAW_RUNTIME_TOKEN}
+      LEECLAW_PROMOTION_TOKEN: ${LEECLAW_PROMOTION_TOKEN}
+      OPENVIKING_ROOT_API_KEY: ${OPENVIKING_ROOT_API_KEY}
+      WEKNORA_API_KEY_LEECLAW: ${WEKNORA_API_KEY_LEECLAW:-}
+    volumes:
+      - ../../deploy/leeclaw/workspaces.json:/etc/leeclaw/workspaces.json:ro
+
+networks:
+  leeclaw:
+    name: leeclaw-net
+    external: true
+  auth-private:
+    name: leeclaw-auth-private
+    internal: true
+    ipam:
+      config:
+        - subnet: 172.30.250.0/24

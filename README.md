@@ -1,4 +1,4 @@
-# LeeClaw v0.10
+# LeeClaw v0.10.1
 
 > **OpenClaw Agent Runtime + WeKnora Knowledge + OpenViking Memory / Experience / Skill**
 
@@ -7,8 +7,8 @@ v0.10 的主题是 **Experience Promotion**：v0.9 已解决“该查哪里、�
 ## 架构边界
 
 ```text
-OpenClaw   = 唯一人类账号 + UI + Agent Runtime + Tool Authority
-WeKnora    = 企业 Knowledge Engine + 正式 Knowledge
+OpenClaw   = 原生 UI + Durable Profile + Agent Runtime + Tool Authority
+WeKnora    = 统一账号认证 + 企业 Knowledge Engine + 正式 Knowledge
 OpenViking = Memory + Session + Experience + 正式 Skill
 LeeClaw    = Workspace + Ontology + Retrieval + Promotion + Governance
 ```
@@ -64,7 +64,8 @@ Agent Runtime 没有正式 Knowledge/Skill publish 或 rollback Tool。Promotion
 
 | 资产 | Source of Truth |
 |---|---|
-| 人类账号 / Profile | OpenClaw |
+| 人类账号 / 密码 / 租户角色 | WeKnora |
+| Durable Profile / Agent Runtime | OpenClaw |
 | Agent Runtime / Tool Authority | OpenClaw |
 | Workspace / Role / Session Binding | LeeClaw Workspace Core |
 | 正式 Knowledge / KB / RAG / Entity Graph | WeKnora |
@@ -77,6 +78,7 @@ Agent Runtime 没有正式 Knowledge/Skill publish 或 rollback Tool。Promotion
 
 ```text
 cobra-knowledge/
+├─ cmd/auth-gateway/
 ├─ integrations/openclaw/
 │  ├─ workspace-core/
 │  ├─ knowledge-plugin/
@@ -104,6 +106,35 @@ cd cobra-knowledge
 ./scripts/verify-v0.10.sh
 ./scripts/check-v0.10-upstreams.sh ../upstream/openclaw ../upstream/weknora ../upstream/openviking
 ```
+
+## 本地 Docker 启动
+
+本仓库的本地编排文件集中在 `deploy/`，生命周期脚本集中在 `scripts/`。密钥只保存在已忽略且权限为 `600` 的 `deploy/.env`。
+
+```bash
+# 一键启动 WeKnora、Neo4j、OpenViking、LeeClaw Core 和 OpenClaw
+./scripts/start.sh
+
+# 查看容器与 HTTP 健康状态
+./scripts/status.sh
+
+# 停止整套服务（默认保留数据卷）
+./scripts/stop.sh
+```
+
+首次启动会自动创建本地 WeKnora 管理员、租户、运行时 API Key，以及绑定默认模型的 `LeeClaw Knowledge` 知识库。登录信息保存在 `deploy/.env` 的 `WEKNORA_BOOTSTRAP_*` 项中。
+
+打开 `http://localhost:18789` 后，直接输入 WeKnora 邮箱和密码。LeeClaw Auth Gateway 会校验目标租户成员身份，将 WeKnora 的 `owner/admin/contributor/viewer` 角色映射为 OpenClaw 权限，并通过 HttpOnly 会话进入原样的 OpenClaw UI；浏览器不再需要保存或粘贴 Gateway Token。OpenClaw 本体不发布宿主机端口，只接受专用 Docker 内网中的认证代理请求。
+
+| 服务 | 本地地址 |
+|---|---|
+| LeeClaw / OpenClaw（主要入口） | http://localhost:18789 |
+| WeKnora 管理页（可选） | http://localhost:8081 |
+| LeeClaw Core 健康检查 | http://localhost:8090/healthz |
+| OpenViking 健康检查 | http://localhost:1933/health |
+| Neo4j Browser | http://localhost:7474 |
+
+日常使用只需打开 `http://localhost:18789`。WeKnora、Neo4j 和 OpenViking 的网页/接口是管理与诊断入口，不需要同时打开。`OPENCLAW_GATEWAY_TOKEN` 仅作为容器内部 CLI 的密码回退使用，不应粘贴到浏览器，也不要把任何密钥提交到版本库。
 
 ## 当前边界
 

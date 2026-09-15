@@ -1,0 +1,55 @@
+services:
+  openviking:
+    image: ${OPENVIKING_IMAGE:-ghcr.io/volcengine/openviking:v0.4.19}
+    container_name: leeclaw-openviking
+    ports:
+      - "${OPENVIKING_SERVER_PORT:-1933}:1933"
+    volumes:
+      - ./openviking:/app/.openviking
+    environment:
+      OPENVIKING_CONFIG_FILE: /app/.openviking/ov.conf
+      OPENVIKING_SERVER_PORT: "1933"
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "openviking-entrypoint", "--healthcheck"]
+      interval: 20s
+      timeout: 5s
+      retries: 10
+      start_period: 40s
+    networks:
+      leeclaw:
+        aliases: [openviking]
+
+  leeclaw-core:
+    image: leeclaw/core:0.10.1
+    build:
+      context: ../cobra-knowledge
+      dockerfile: ../deploy/core.Dockerfile
+    container_name: leeclaw-core
+    env_file: .env
+    environment:
+      COBRA_GRAPH_API_LISTEN: ":8090"
+      COBRA_ONTOLOGY_REGISTRY_ROOT: /var/lib/leeclaw/ontology-registry
+      LEECLAW_PROMOTION_ROOT: /var/lib/leeclaw/promotion
+      COBRA_WEKNORA_BASE_URL: http://weknora:8080
+      COBRA_NEO4J_URL: http://neo4j:7474
+      OPENVIKING_BASE_URL: http://openviking:1933
+      COBRA_CATALOG_OVERLAY_FILE: /etc/leeclaw/semantic-overlay.json
+      COBRA_GRAPH_AUTH_MODE: weknora
+    volumes:
+      - leeclaw-core-data:/var/lib/leeclaw
+    ports:
+      - "${LEECLAW_CORE_PORT:-8090}:8090"
+    restart: unless-stopped
+    networks:
+      leeclaw:
+        aliases: [leeclaw-core-api]
+
+networks:
+  leeclaw:
+    name: leeclaw-net
+    external: true
+
+volumes:
+  leeclaw-core-data:
+    name: leeclaw-core-data

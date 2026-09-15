@@ -1,5 +1,12 @@
 # Changelog
 
+## v0.10.1
+
+- Added OpenClaw-profile-first workspace and downstream account mapping.
+- Added the OpenViking-backed Memory adapter and governed promotion closure.
+- Persisted the 18790 sandbox route and Chromium/CJK browser runtime.
+- Added unified verification and destructive container-recreate regression.
+
 ## v0.10.0
 
 - Added controlled Experience Promotion with Candidate / Inspection / Review / Publication / Rollback contracts.

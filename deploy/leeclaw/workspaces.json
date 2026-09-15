@@ -1,0 +1,27 @@
+{
+  "version": 1,
+  "workspaces": [
+    {
+      "id": "leeclaw-local",
+      "name": "LeeClaw Local",
+      "description": "Local single-user LeeClaw workspace",
+      "members": [
+        {
+          "profileId": "fd7049b6-3845-418f-84fa-20f9be3fe462",
+          "role": "owner",
+          "displayName": "Local Owner"
+        }
+      ],
+      "weknora": {
+        "tenantId": "10000",
+        "apiKeyEnv": "WEKNORA_API_KEY_LEECLAW",
+        "knowledgeBaseIds": [
+          "e2290b7d-f893-4b3c-ad0a-a266b1886fc6"
+        ]
+      },
+      "openviking": {
+        "accountId": "leeclaw-local"
+      }
+    }
+  ]
+}

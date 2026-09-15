@@ -53,11 +53,18 @@ export class OpenVikingClient {
     } finally { clearTimeout(timer); }
   }
   listSessions(context) { return this.request("GET", "/api/v1/sessions", { context }); }
+  listMemory(context, limit = 100) { const q = new URLSearchParams({ uri: "viking://~/memories", recursive: "true", output: "agent", node_limit: String(limit), show_all_hidden: "false", include_tags: "true" }); return this.request("GET", `/api/v1/fs/ls?${q}`, { context }); }
   searchMemory(context, query, limit = 20) { return this.request("POST", "/api/v1/search/find", { context, body: { query, target_uri: "viking://~/memories", limit, read_content: true } }); }
+  readContent(context, uri) { const q = new URLSearchParams({ uri, raw: "false" }); return this.request("GET", `/api/v1/content/read?${q}`, { context }); }
+  statContent(context, uri) { const q = new URLSearchParams({ uri }); return this.request("GET", `/api/v1/fs/stat?${q}`, { context }); }
+  readAttrs(context, uri) { const q = new URLSearchParams({ uri }); return this.request("GET", `/api/v1/fs/attrs?${q}`, { context }); }
+  writeContent(context, uri, content, mode = "replace", tags = []) { return this.request("POST", "/api/v1/content/write", { context, body: { uri, content, mode, wait: true, tags, tag_mode: "replace" } }); }
+  deleteContent(context, uri) { const q = new URLSearchParams({ uri, recursive: "false", wait: "true" }); return this.request("DELETE", `/api/v1/fs?${q}`, { context }); }
   listSkills(context) { return this.request("GET", "/api/v1/skills", { context }); }
   findSkills(context, query, limit = 20, scoreThreshold) { return this.request("POST", "/api/v1/skills/find", { context, body: { query, limit, level: [0, 1], ...(Number.isFinite(scoreThreshold) ? { score_threshold: scoreThreshold } : {}) } }); }
   getSkill(context, name, targetUri) { const q = new URLSearchParams({ level: "2", include_content: "true", include_files: "true" }); if (targetUri) q.set("target_uri", targetUri); return this.request("GET", `/api/v1/skills/${encodeURIComponent(name)}?${q}`, { context }); }
   getSession(context, sessionId) { return this.request("GET", `/api/v1/sessions/${encodeURIComponent(sessionId)}`, { context }); }
+  getSessionArchive(context, sessionId, archiveId) { return this.request("GET", `/api/v1/sessions/${encodeURIComponent(sessionId)}/archives/${encodeURIComponent(archiveId)}`, { context }); }
   addSessionMessage(context, sessionId, role, text) { return this.request("POST", `/api/v1/sessions/${encodeURIComponent(sessionId)}/messages`, { context, body: { role, parts: [{ type: "text", text }] } }); }
   commitSession(context, sessionId, keepRecentCount = 0) { return this.request("POST", `/api/v1/sessions/${encodeURIComponent(sessionId)}/commit`, { context, body: keepRecentCount > 0 ? { keep_recent_count: keepRecentCount } : {} }); }
 }

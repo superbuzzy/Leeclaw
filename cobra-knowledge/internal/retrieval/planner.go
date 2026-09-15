@@ -206,6 +206,7 @@ func (p *Planner) preferredSourcesForMatchedProperties(query string) []model.Ret
 				out = append(out, source)
 			}
 		}
+	}
 	return out
 }
 

@@ -2,7 +2,7 @@
   "id":"leeclaw-promotion",
   "name":"LeeClaw Promotion",
   "description":"Controlled Experience Promotion for reviewed Knowledge and shared Skill publication.",
-  "version":"0.10.0",
+  "version":"0.10.1",
   "activation":{"onStartup":true},
   "configSchema":{"type":"object","additionalProperties":false,"properties":{"coreApiBaseUrl":{"type":"string"},"promotionToken":{"type":"string"},"workspaceRegistryPath":{"type":"string"},"workspaceStatePath":{"type":"string"},"requestTimeoutMs":{"type":"number","minimum":1000,"maximum":120000}},"required":["coreApiBaseUrl","promotionToken","workspaceRegistryPath"]}
 }

@@ -1,1 +1,1 @@
-{"name":"@leeclaw/workspace-core","version":"0.10.0","private":true,"type":"module","description":"Canonical LeeClaw workspace membership, role and downstream mapping resolver shared by OpenClaw integrations.","exports":"./index.js","scripts":{"test":"node --test test/*.test.js"}}
+{"name":"@leeclaw/workspace-core","version":"0.10.1","private":true,"type":"module","description":"Canonical LeeClaw workspace membership, role and downstream mapping resolver shared by OpenClaw integrations.","exports":"./index.js","scripts":{"test":"node --test test/*.test.js"}}

@@ -1,6 +1,6 @@
 # LeeClaw Roadmap
 
-> 当前基线：**v0.10.0 — Experience Promotion**
+> 当前基线：**v0.10.1 — v0.10 Persistence & Integration Patch**
 
 ```text
 v0.8  Skill + Knowledge Runtime                         ✅

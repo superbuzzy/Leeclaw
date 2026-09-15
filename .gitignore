@@ -1,0 +1,6 @@
+deploy/.env
+deploy/openviking/ov.conf
+deploy/openclaw/state/
+data/
+build/
+upstream/weknora/.env

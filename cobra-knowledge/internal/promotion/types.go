@@ -31,6 +31,17 @@ const (
 	StateRolledBack CandidateState = "rolled_back"
 )
 
+// PromotionDecision is the closed set of authoritative-backend outcomes. It
+// is separate from the human approve/reject review decision.
+type PromotionDecision string
+
+const (
+	DecisionCreate   PromotionDecision = "CREATE"
+	DecisionUpdate   PromotionDecision = "UPDATE"
+	DecisionSkip     PromotionDecision = "SKIP"
+	DecisionConflict PromotionDecision = "CONFLICT"
+)
+
 type Principal struct {
 	WorkspaceID         string
 	UserID              string
@@ -93,17 +104,18 @@ type CandidateInput struct {
 }
 
 type Inspection struct {
-	CheckedAt           time.Time `json:"checked_at"`
-	EvidenceVerified    bool      `json:"evidence_verified"`
-	Duplicate           bool      `json:"duplicate"`
-	DuplicateResourceID string    `json:"duplicate_resource_id,omitempty"`
-	Conflict            bool      `json:"conflict"`
-	ConflictReason      string    `json:"conflict_reason,omitempty"`
-	CurrentExists       bool      `json:"current_exists,omitempty"`
-	CurrentRevision     string    `json:"current_revision,omitempty"`
-	CurrentContent      string    `json:"current_content,omitempty"`
-	ValidationStatus    string    `json:"validation_status,omitempty"`
-	BlockingReason      string    `json:"blocking_reason,omitempty"`
+	CheckedAt           time.Time         `json:"checked_at"`
+	Decision            PromotionDecision `json:"decision"`
+	EvidenceVerified    bool              `json:"evidence_verified"`
+	Duplicate           bool              `json:"duplicate"`
+	DuplicateResourceID string            `json:"duplicate_resource_id,omitempty"`
+	Conflict            bool              `json:"conflict"`
+	ConflictReason      string            `json:"conflict_reason,omitempty"`
+	CurrentExists       bool              `json:"current_exists,omitempty"`
+	CurrentRevision     string            `json:"current_revision,omitempty"`
+	CurrentContent      string            `json:"current_content,omitempty"`
+	ValidationStatus    string            `json:"validation_status,omitempty"`
+	BlockingReason      string            `json:"blocking_reason,omitempty"`
 }
 
 type Review struct {

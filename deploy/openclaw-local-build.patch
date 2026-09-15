@@ -1,0 +1,62 @@
+--- a/Dockerfile
++++ b/Dockerfile
+@@ -96,7 +96,7 @@
+ # ── Production dependencies ────────────────────────────────────
+ FROM dependency-inputs AS production-deps
+ RUN --mount=type=cache,id=openclaw-pnpm-store,target=/root/.local/share/pnpm/store,sharing=locked \
+-    NODE_OPTIONS=--max-old-space-size=2048 pnpm install --frozen-lockfile --prod \
++    NODE_OPTIONS=--max-old-space-size=2048 pnpm install --no-frozen-lockfile --prod \
+       --config.supportedArchitectures.os=linux \
+       --config.supportedArchitectures.cpu="$(node -p 'process.arch')" \
+       --config.supportedArchitectures.libc=glibc
+@@ -113,8 +113,8 @@
+ 
+ # Reduce OOM risk on low-memory hosts during dependency installation.
+ # Docker builds on small VMs may otherwise fail with "Killed" (exit 137).
+ RUN --mount=type=cache,id=openclaw-pnpm-store,target=/root/.local/share/pnpm/store,sharing=locked \
+-    NODE_OPTIONS=--max-old-space-size=2048 pnpm install --frozen-lockfile \
++    NODE_OPTIONS=--max-old-space-size=2048 pnpm install --no-frozen-lockfile \
+       --config.supportedArchitectures.os=linux \
+       --config.supportedArchitectures.cpu="$(node -p 'process.arch')" \
+       --config.supportedArchitectures.libc=glibc
+@@ -247,9 +247,17 @@
+ # spawns `ssh` directly, and bookworm-slim does not provide it.
+ # Apply current Debian point-release security fixes even when the pinned base
+ # digest predates them, without waiting for a base-digest refresh.
++# Bootstrap the slim image with the CA bundle from the full build image so the
++# package index can use HTTPS even before ca-certificates is installed here.
++COPY --from=dependency-inputs /etc/ssl/certs/ca-certificates.crt /etc/ssl/certs/ca-certificates.crt
+ RUN --mount=type=cache,id=openclaw-bookworm-apt-cache,target=/var/cache/apt,sharing=locked \
+     --mount=type=cache,id=openclaw-bookworm-apt-lists,target=/var/lib/apt,sharing=locked \
+-    apt-get update && \
++    sed -i \
++      -e 's|http://deb.debian.org/debian-security|https://mirrors.aliyun.com/debian-security|g' \
++      -e 's|http://deb.debian.org/debian|https://mirrors.aliyun.com/debian|g' \
++      /etc/apt/sources.list.d/debian.sources && \
++    printf 'Acquire::ForceIPv4 "true";\n' > /etc/apt/apt.conf.d/99leeclaw-force-ipv4 && \
++    apt-get -o Acquire::ForceIPv4=true -o Acquire::Retries=5 update && \
+     DEBIAN_FRONTEND=noninteractive apt-get dist-upgrade -y && \
+     DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends \
+       ca-certificates curl git hostname libgomp1 lsof openssh-client openssl procps python3 tini && \
+--- a/pnpm-workspace.yaml
++++ b/pnpm-workspace.yaml
+@@ -5,10 +5,19 @@
+   - extensions/*
+   - examples/*
+ 
++# Bundled plugins are compiled together with the root application. Prevent
++# optional `openclaw` peers from downloading a second copy from npm.
++autoInstallPeers: false
++allowUnusedPatches: true
++
+ minimumReleaseAge: 10080
+ minimumReleaseAgeStrict: true
+ 
+ # Trusted Codex runtimes are outside the dependency cooldown.
+ minimumReleaseAgeExclude:
++  # LeeClaw plugins declare OpenClaw as an optional peer. The derived local
++  # workspace is built from this reviewed OpenClaw source at the same version.
++  - "openclaw@2026.9.3"
++  - "@openclaw/ai@2026.9.3"
+   # Reviewed Proxyline Bun runtime fix; remove after 2026-09-13 20:51 UTC.
+   - "@openclaw/proxyline@0.3.11"

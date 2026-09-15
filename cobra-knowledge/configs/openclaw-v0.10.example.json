@@ -1,3 +1,39 @@
 {
-  "plugins":{"entries":{"leeclaw-knowledge":{"enabled":true,"config":{"weknoraBaseUrl":"http://weknora:8080","coreApiBaseUrl":"http://leeclaw-core-api:8090","runtimeToken":"${LEECLAW_RUNTIME_TOKEN}","workspaceRegistryPath":"/etc/leeclaw/workspaces.json","workspaceStatePath":"/var/lib/leeclaw/workspaces.state.json","uploadMaxBytes":10485760,"auditLogPath":"/var/lib/leeclaw/knowledge-audit.jsonl"}},"leeclaw-openviking":{"enabled":true,"config":{"baseUrl":"http://openviking:1933","apiKey":"${OPENVIKING_ROOT_API_KEY}","workspaceRegistryPath":"/etc/leeclaw/workspaces.json","workspaceStatePath":"/var/lib/leeclaw/workspaces.state.json","memoryRuntimeEnabled":true,"memoryRecallLimit":8,"memoryMaxRecallChars":12000,"skillRuntimeEnabled":true,"skillResolveLimit":5,"skillScoreThreshold":0.62,"skillMaxContentChars":20000,"commitPendingTokens":1200,"commitKeepRecentCount":6}},"leeclaw-promotion":{"enabled":true,"config":{"coreApiBaseUrl":"http://leeclaw-core-api:8090","promotionToken":"${LEECLAW_PROMOTION_TOKEN}","workspaceRegistryPath":"/etc/leeclaw/workspaces.json","workspaceStatePath":"/var/lib/leeclaw/workspaces.state.json"}}}}
+  "mcp": {"apps": {"enabled": true, "sandboxPort": 18790}},
+  "browser": {"executablePath": "/usr/bin/chromium"},
+  "plugins": {
+    "slots": {"memory": "leeclaw-openviking"},
+    "entries": {
+      "leeclaw-knowledge": {"enabled": true, "config": {
+        "weknoraBaseUrl": "http://weknora:8080",
+        "coreApiBaseUrl": "http://leeclaw-core-api:8090",
+        "runtimeToken": "${LEECLAW_RUNTIME_TOKEN}",
+        "workspaceRegistryPath": "/etc/leeclaw/workspaces.json",
+        "workspaceStatePath": "/var/lib/leeclaw/workspaces.state.json",
+        "uploadMaxBytes": 10485760,
+        "auditLogPath": "/var/lib/leeclaw/knowledge-audit.jsonl"
+      }},
+      "leeclaw-openviking": {"enabled": true, "config": {
+        "baseUrl": "http://openviking:1933",
+        "apiKey": "${OPENVIKING_ROOT_API_KEY}",
+        "workspaceRegistryPath": "/etc/leeclaw/workspaces.json",
+        "workspaceStatePath": "/var/lib/leeclaw/workspaces.state.json",
+        "memoryRuntimeEnabled": true,
+        "memoryRecallLimit": 8,
+        "memoryMaxRecallChars": 12000,
+        "skillRuntimeEnabled": true,
+        "skillResolveLimit": 5,
+        "skillScoreThreshold": 0.62,
+        "skillMaxContentChars": 20000,
+        "commitPendingTokens": 1200,
+        "commitKeepRecentCount": 6
+      }},
+      "leeclaw-promotion": {"enabled": true, "config": {
+        "coreApiBaseUrl": "http://leeclaw-core-api:8090",
+        "promotionToken": "${LEECLAW_PROMOTION_TOKEN}",
+        "workspaceRegistryPath": "/etc/leeclaw/workspaces.json",
+        "workspaceStatePath": "/var/lib/leeclaw/workspaces.state.json"
+      }}
+    }
+  }
 }

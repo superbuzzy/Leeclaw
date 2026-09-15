@@ -1,0 +1,58 @@
+services:
+  frontend:
+    env_file: !override
+      - ../../deploy/.env
+    container_name: leeclaw-weknora-frontend
+    networks:
+      WeKnora-network: {}
+      leeclaw:
+        aliases: [weknora-ui]
+
+  app:
+    env_file: !override
+      - ../../deploy/.env
+    container_name: leeclaw-weknora-app
+    volumes:
+      - ../../deploy/weknora/builtin_models.yaml:/app/config/builtin_models.yaml:ro
+    environment:
+      LLM_MODEL_NAME: ${DEEPSEEK_MODEL}
+      LLM_BASE_URL: ${DEEPSEEK_BASE_URL}
+      LLM_API_KEY: ${DEEPSEEK_API_KEY}
+      LLM_PROVIDER: deepseek
+      EMBEDDING_MODEL_NAME: ${SILICONFLOW_EMBEDDING_MODEL}
+      EMBEDDING_BASE_URL: ${SILICONFLOW_BASE_URL}
+      EMBEDDING_API_KEY: ${SILICONFLOW_API_KEY}
+      EMBEDDING_PROVIDER: siliconflow
+    networks:
+      WeKnora-network: {}
+      leeclaw:
+        aliases: [weknora]
+
+  docreader:
+    env_file: !override
+      - ../../deploy/.env
+    container_name: leeclaw-weknora-docreader
+
+  postgres:
+    env_file: !override
+      - ../../deploy/.env
+    container_name: leeclaw-weknora-postgres
+
+  redis:
+    env_file: !override
+      - ../../deploy/.env
+    container_name: leeclaw-weknora-redis
+
+  neo4j:
+    env_file: !override
+      - ../../deploy/.env
+    container_name: leeclaw-weknora-neo4j
+    networks:
+      WeKnora-network: {}
+      leeclaw:
+        aliases: [neo4j]
+
+networks:
+  leeclaw:
+    name: leeclaw-net
+    external: true
